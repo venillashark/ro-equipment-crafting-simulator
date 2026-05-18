@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RO 裝備製作模擬器 V2 React 概念稿</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #edf1f4;
+        --panel: #ffffff;
+        --panel-soft: #f6f8fa;
+        --ink: #172026;
+        --muted: #63707a;
+        --line: #d9e1e6;
+        --teal: #08756f;
+        --teal-2: #0b5f5c;
+        --teal-soft: #e1f3ef;
+        --blue: #315f9f;
+        --gold: #b36b12;
+        --red: #a43d35;
+        --green: #1d7b47;
+        --shadow: 0 18px 42px rgba(23, 32, 38, 0.1);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background:
+          radial-gradient(circle at top left, rgba(8, 117, 111, 0.12), transparent 340px),
+          linear-gradient(180deg, #fbfcfc 0, rgba(251, 252, 252, 0) 260px),
+          var(--bg);
+        color: var(--ink);
+        font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      .shell {
+        width: min(1500px, 100%);
+        margin: 0 auto;
+        padding: 22px clamp(14px, 3vw, 34px) 44px;
+      }
+
+      .app-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+      }
+
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 8px;
+        background: var(--teal);
+        color: #fff;
+        font-weight: 950;
+      }
+
+      .eyebrow {
+        margin: 0;
+        color: var(--teal);
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 0;
+        font-size: clamp(24px, 2.4vw, 34px);
+        line-height: 1.12;
+        letter-spacing: 0;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+      }
+
+      .btn {
+        border: 0;
+        border-radius: 8px;
+        padding: 11px 14px;
+        background: var(--teal);
+        color: #fff;
+        font-weight: 950;
+        box-shadow: 0 8px 20px rgba(8, 117, 111, 0.2);
+      }
+
+      .btn.secondary {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        box-shadow: none;
+      }
+
+      .dashboard {
+        display: grid;
+        grid-template-columns: 330px minmax(0, 1fr);
+        gap: 16px;
+      }
+
+      .sidebar,
+      .main {
+        min-width: 0;
+      }
+
+      .sidebar {
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+
+      .main {
+        display: grid;
+        gap: 16px;
+      }
+
+      .card {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: var(--shadow);
+      }
+
+      .card.pad {
+        padding: 16px;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .card h2 {
+        margin-bottom: 0;
+        font-size: 20px;
+        letter-spacing: 0;
+      }
+
+      .pill {
+        border-radius: 999px;
+        background: var(--teal-soft);
+        color: var(--teal-2);
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 950;
+        white-space: nowrap;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .form-grid.one {
+        grid-template-columns: 1fr;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      input,
+      select {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfd;
+        color: var(--ink);
+        padding: 9px 10px;
+        font-weight: 850;
+      }
+
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 42px;
+        color: var(--ink);
+      }
+
+      .check input {
+        width: 18px;
+        min-height: 18px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        gap: 16px;
+      }
+
+      .hero-card {
+        position: relative;
+        overflow: hidden;
+        border-top: 5px solid var(--teal);
+        padding: 18px;
+      }
+
+      .hero-card::after {
+        content: "";
+        position: absolute;
+        right: -70px;
+        top: -100px;
+        width: 240px;
+        height: 240px;
+        border-radius: 50%;
+        background: rgba(8, 117, 111, 0.08);
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        position: relative;
+        z-index: 1;
+      }
+
+      .metric {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: linear-gradient(180deg, #fff, var(--panel-soft));
+        padding: 13px;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 6px;
+        font-size: clamp(18px, 1.25vw, 23px);
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+
+      .metric.good strong {
+        color: var(--green);
+      }
+
+      .metric.warn strong {
+        color: var(--gold);
+      }
+
+      .metric.bad strong {
+        color: var(--red);
+      }
+
+      .quote-card {
+        padding: 16px;
+      }
+
+      .quote-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .quote-row {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #fff;
+        padding: 12px;
+      }
+
+      .quote-row span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      .quote-row strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 22px;
+        white-space: nowrap;
+      }
+
+      .analysis-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+        gap: 16px;
+      }
+
+      .sim-panel {
+        padding: 16px;
+      }
+
+      .sim-toolbar {
+        display: grid;
+        grid-template-columns: 170px 1fr auto;
+        gap: 10px;
+        align-items: end;
+        margin-bottom: 14px;
+      }
+
+      .dist-card {
+        border: 1px solid #cbe2dc;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #ffffff 0%, #f2fbf8 100%);
+        padding: 14px;
+      }
+
+      .chart {
+        display: grid;
+        grid-template-columns: 56px minmax(0, 1fr);
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .axis {
+        display: grid;
+        align-content: space-between;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 850;
+        text-align: right;
+      }
+
+      .histogram {
+        display: grid;
+        grid-template-columns: repeat(22, 1fr);
+        align-items: end;
+        gap: 4px;
+        height: 180px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #fff;
+      }
+
+      .bar {
+        min-height: 8px;
+        border-radius: 4px 4px 0 0;
+        background: var(--teal);
+      }
+
+      .bar.p90 {
+        background: var(--gold);
+      }
+
+      .bar.p95 {
+        background: var(--red);
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 10px 0 0 66px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 5px;
+        background: var(--teal);
+      }
+
+      .dot.gold {
+        background: var(--gold);
+      }
+
+      .dot.red {
+        background: var(--red);
+      }
+
+      .route-panel {
+        padding: 16px;
+      }
+
+      .route-list {
+        display: grid;
+        gap: 10px;
+        max-height: 490px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .route-step {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #fff;
+        padding: 11px;
+      }
+
+      .step-no {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--teal);
+        color: #fff;
+        font-weight: 950;
+      }
+
+      .route-step h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+
+      .route-step p {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .tag {
+        border-radius: 999px;
+        background: var(--panel-soft);
+        color: var(--muted);
+        padding: 5px 8px;
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .tab {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fff;
+        color: var(--muted);
+        padding: 7px 11px;
+        font-size: 13px;
+        font-weight: 950;
+      }
+
+      .tab.active {
+        background: var(--teal);
+        color: #fff;
+      }
+
+      .table-card {
+        padding: 16px;
+      }
+
+      .table-wrap {
+        max-height: 340px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+      }
+
+      table {
+        width: 100%;
+        min-width: 920px;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 10px;
+        text-align: left;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        background: var(--panel-soft);
+        color: #4d5a62;
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      .number {
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      tr.chosen {
+        background: var(--teal-soft);
+      }
+
+      .notice {
+        margin-top: 12px;
+        border: 1px solid #ead7b6;
+        border-radius: 9px;
+        background: #fff5df;
+        color: var(--gold);
+        padding: 12px;
+        line-height: 1.5;
+        font-size: 13px;
+      }
+
+      @media (max-width: 1180px) {
+        .dashboard,
+        .hero-grid,
+        .analysis-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 850px) {
+        .app-nav,
+        .actions {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .sidebar,
+        .form-grid,
+        .metrics,
+        .sim-toolbar {
+          grid-template-columns: 1fr;
+        }
+
+        .metric strong,
+        .quote-row strong {
+          white-space: normal;
+        }
+
+        .chart {
+          grid-template-columns: 1fr;
+        }
+
+        .axis,
+        .legend {
+          display: none;
+        }
+
+        .route-step {
+          grid-template-columns: 38px minmax(0, 1fr);
+        }
+
+        .route-step .tag {
+          grid-column: 2;
+          justify-self: start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="app-nav">
+        <div class="brand">
+          <div class="mark">RO</div>
+          <div>
+            <p class="eyebrow">React + Vite V2 Concept</p>
+            <h1>裝備製作成本與代衝報價模擬器</h1>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn secondary">匯入價格</button>
+          <button class="btn secondary">儲存方案</button>
+          <button class="btn">重新計算</button>
+        </div>
+      </header>
+
+      <main class="dashboard">
+        <aside class="sidebar">
+          <section class="card pad">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Build Target</p>
+                <h2>養成目標</h2>
+              </div>
+              <span class="pill">Auto saved</span>
+            </div>
+            <div class="form-grid one">
+              <label>裝備類型<select><option>五級武器</option></select></label>
+              <label>裝備基礎價格<input value="10,000,000" /></label>
+              <label class="check"><input type="checkbox" checked /> 已持有第一件裝備</label>
+            </div>
+            <div class="form-grid" style="margin-top: 10px">
+              <label>起始階級<select><option>無階</option></select></label>
+              <label>起始精煉<input value="0" /></label>
+              <label>目標階級<select><option>A</option></select></label>
+              <label>目標精煉<input value="12" /></label>
+            </div>
+          </section>
+
+          <section class="card pad">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Strategy</p>
+                <h2>路線策略</h2>
+              </div>
+            </div>
+            <div class="form-grid one">
+              <label>精煉材料<select><option>自動比較最省</option></select></label>
+              <label>祝福保護<select><option>自動比較</option></select></label>
+              <label>庇佑星塵<select><option>自動比較</option></select></label>
+              <label>模擬策略<select><option>照推薦路線執行</option></select></label>
+            </div>
+          </section>
+
+          <section class="card pad">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Pricing</p>
+                <h2>代衝參數</h2>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label>利潤率 %<input value="15" /></label>
+              <label>風險緩衝 %<input value="10" /></label>
+              <label>最低工資<input value="1,000,000" /></label>
+              <label>報價基準<select><option>P95</option></select></label>
+            </div>
+          </section>
+        </aside>
+
+        <section class="main">
+          <section class="hero-grid">
+            <div class="card hero-card">
+              <div class="card-head">
+                <div>
+                  <p class="eyebrow">Overview</p>
+                  <h2>理論期望與模擬分布</h2>
+                </div>
+                <span class="pill">10,000 runs</span>
+              </div>
+              <div class="metrics">
+                <div class="metric"><span>理論期望成本</span><strong>848,586,646 Z</strong></div>
+                <div class="metric good"><span>模擬平均成本</span><strong>852,104,300 Z</strong></div>
+                <div class="metric warn"><span>P95 成本</span><strong>1,420,000,000 Z</strong></div>
+                <div class="metric bad"><span>最慘成本</span><strong>3,880,000,000 Z</strong></div>
+              </div>
+            </div>
+
+            <div class="card quote-card">
+              <div class="card-head">
+                <div>
+                  <p class="eyebrow">Commission</p>
+                  <h2>代衝報價</h2>
+                </div>
+              </div>
+              <div class="quote-list">
+                <div class="quote-row"><span>低標</span><strong>849,586,646 Z</strong></div>
+                <div class="quote-row"><span>建議收費</span><strong style="color: var(--green)">1,061,733,307 Z</strong></div>
+                <div class="quote-row"><span>P95 保守報價</span><strong style="color: var(--gold)">1,420,000,000 Z</strong></div>
+              </div>
+              <div class="notice">V2 預設用 P95 作為代衝風險參考，避免只看期望值低估尾端風險。</div>
+            </div>
+          </section>
+
+          <section class="analysis-grid">
+            <div class="card sim-panel">
+              <div class="card-head">
+                <div>
+                  <p class="eyebrow">Monte Carlo</p>
+                  <h2>蒙地卡羅模擬</h2>
+                </div>
+                <span class="pill">可重跑</span>
+              </div>
+              <div class="dist-card">
+                <div class="sim-toolbar">
+                  <label>模擬次數<select><option>10,000</option><option>100,000</option></select></label>
+                  <label>隨機種子<input value="auto-20260518" /></label>
+                  <button class="btn">執行模擬</button>
+                </div>
+                <div class="metrics">
+                  <div class="metric"><span>平均</span><strong>852,104,300 Z</strong></div>
+                  <div class="metric"><span>中位數</span><strong>714,880,000 Z</strong></div>
+                  <div class="metric warn"><span>P90</span><strong>1,180,000,000 Z</strong></div>
+                  <div class="metric warn"><span>P95</span><strong>1,420,000,000 Z</strong></div>
+                </div>
+                <div class="chart">
+                  <div class="axis"><span>多</span><span>次數</span><span>少</span></div>
+                  <div class="histogram">
+                    <div class="bar" style="height: 16%"></div>
+                    <div class="bar" style="height: 28%"></div>
+                    <div class="bar" style="height: 44%"></div>
+                    <div class="bar" style="height: 66%"></div>
+                    <div class="bar" style="height: 90%"></div>
+                    <div class="bar" style="height: 100%"></div>
+                    <div class="bar" style="height: 86%"></div>
+                    <div class="bar" style="height: 68%"></div>
+                    <div class="bar" style="height: 54%"></div>
+                    <div class="bar" style="height: 42%"></div>
+                    <div class="bar" style="height: 34%"></div>
+                    <div class="bar" style="height: 27%"></div>
+                    <div class="bar p90" style="height: 22%"></div>
+                    <div class="bar p90" style="height: 18%"></div>
+                    <div class="bar p95" style="height: 14%"></div>
+                    <div class="bar p95" style="height: 11%"></div>
+                    <div class="bar p95" style="height: 9%"></div>
+                    <div class="bar p95" style="height: 7%"></div>
+                    <div class="bar p95" style="height: 6%"></div>
+                    <div class="bar p95" style="height: 5%"></div>
+                    <div class="bar p95" style="height: 4%"></div>
+                    <div class="bar p95" style="height: 3%"></div>
+                  </div>
+                </div>
+                <div class="legend">
+                  <span><i class="dot"></i>主要分布</span>
+                  <span><i class="dot gold"></i>P90 後</span>
+                  <span><i class="dot red"></i>P95 後</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card route-panel">
+              <div class="card-head">
+                <div>
+                  <p class="eyebrow">Route</p>
+                  <h2>推薦成功路徑</h2>
+                </div>
+                <span class="pill">57 步</span>
+              </div>
+              <div class="route-list">
+                <article class="route-step">
+                  <div class="step-no">1</div>
+                  <div><h3>一般乙太材料：無階 +0 → +1</h3><p>100%，單次 139,999 Z</p></div>
+                  <span class="tag">安全</span>
+                </article>
+                <article class="route-step">
+                  <div class="step-no">8</div>
+                  <div><h3>濃縮乙太材料：無階 +7 → +8</h3><p>失敗退 1，自動判斷比一般省</p></div>
+                  <span class="tag">濃縮</span>
+                </article>
+                <article class="route-step">
+                  <div class="step-no">12</div>
+                  <div><h3>保護升階：+11 無階 → D +0</h3><p>失敗不變，庇佑價格未填則不加成</p></div>
+                  <span class="tag">升階</span>
+                </article>
+                <article class="route-step">
+                  <div class="step-no">57</div>
+                  <div><h3>高濃縮乙太 + 祝福：A +11 → A +12</h3><p>最後階段，報價同步看 P95</p></div>
+                  <span class="tag">高風險</span>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <section class="card table-card">
+            <div class="tabs">
+              <span class="tab active">精煉比較</span>
+              <span class="tab">升階比較</span>
+              <span class="tab">材料成本</span>
+              <span class="tab">模擬樣本</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>階段</th>
+                    <th>選項</th>
+                    <th class="number">成功率</th>
+                    <th class="number">單次成本</th>
+                    <th class="number">剩餘期望</th>
+                    <th>判斷</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="chosen">
+                    <td>A +10 → A +11</td>
+                    <td>高濃縮乙太 + 祝福</td>
+                    <td class="number">15%</td>
+                    <td class="number">13,746,956 Z</td>
+                    <td class="number">82,334,100 Z</td>
+                    <td><strong>採用</strong></td>
+                  </tr>
+                  <tr>
+                    <td>A +10 → A +11</td>
+                    <td>乙太鈽鐳礦石</td>
+                    <td class="number">8%</td>
+                    <td class="number">1,100,000 Z</td>
+                    <td class="number">143,820,000 Z</td>
+                    <td>風險較高</td>
+                  </tr>
+                  <tr>
+                    <td>A +9 → A +10</td>
+                    <td>濃縮乙太神之金屬</td>
+                    <td class="number">20%</td>
+                    <td class="number">715,000 Z</td>
+                    <td class="number">96,244,000 Z</td>
+                    <td>比一般省</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
