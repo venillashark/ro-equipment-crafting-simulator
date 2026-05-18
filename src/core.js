@@ -1229,7 +1229,7 @@
     module.exports = api;
   }
 
-  if (typeof module === "undefined" || !module.exports) {
+  if (typeof window !== "undefined") {
     globalScope.ROSimulator = api;
   }
 })(typeof window !== "undefined" ? window : globalThis);
