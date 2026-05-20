@@ -369,14 +369,34 @@
   function materialBundleCost(materialCosts, bundle) {
     let total = 0;
     const parts = [];
-    for (const [key, qty] of Object.entries(bundle ?? {})) {
+    const normalizedBundle = normalizeBundle(bundle);
+    for (const [key, qty] of Object.entries(normalizedBundle)) {
       if (qty <= 0) continue;
       const unit = materialCosts[key]?.best;
-      if (!Number.isFinite(unit)) return { total: Infinity, parts: [] };
+      if (!Number.isFinite(unit)) return { total: Infinity, parts: [], bundle: normalizedBundle };
       total += unit * qty;
       parts.push(`${MATERIALS[key] ?? key} x${qty}`);
     }
-    return { total, parts };
+    return { total, parts, bundle: normalizedBundle };
+  }
+
+  function normalizeBundle(bundle) {
+    const normalized = {};
+    for (const [key, qty] of Object.entries(bundle ?? {})) {
+      const amount = toNumber(qty, 0);
+      if (amount > 0) normalized[key] = (normalized[key] ?? 0) + amount;
+    }
+    return normalized;
+  }
+
+  function addBundle(target, bundle, multiplier = 1) {
+    for (const [key, qty] of Object.entries(bundle ?? {})) {
+      const amount = toNumber(qty, 0) * multiplier;
+      if (amount === 0) continue;
+      target[key] = (target[key] ?? 0) + amount;
+      if (Math.abs(target[key]) < EPSILON) delete target[key];
+    }
+    return target;
   }
 
   function refineFee(equipmentType, fromRefine) {
@@ -473,7 +493,10 @@
           rate: option.rate,
           cost: base.total + fee,
           materials: base.parts,
+          materialBundle: base.bundle,
           zenyFee: fee,
+          actionZenyFee: fee,
+          consumption: { materials: base.bundle, zenyFee: fee },
           breaks: failState === "break",
         });
       }
@@ -496,7 +519,10 @@
           rate: option.rate,
           cost: protectedCost.total + fee,
           materials: protectedCost.parts,
+          materialBundle: protectedCost.bundle,
           zenyFee: fee,
+          actionZenyFee: fee,
+          consumption: { materials: protectedCost.bundle, zenyFee: fee },
           breaks: false,
         });
       }
@@ -545,7 +571,10 @@
           rate,
           cost: material.total + baseFee,
           materials: material.parts,
+          materialBundle: material.bundle,
           zenyFee: baseFee,
+          actionZenyFee: baseFee,
+          consumption: { materials: material.bundle, zenyFee: baseFee },
           breaks: !isProtected,
         });
       }
@@ -612,6 +641,7 @@
 
     const steps = extractSuccessPath(start, target, policy, values, startKey, replacementCost);
     const risk = estimatePolicyRisk(states, start, target, policy, startKey);
+    const expectedConsumption = evaluatePolicyConsumption(states, target, policy, startKey, replacementCost);
     return {
       ok: true,
       start,
@@ -621,6 +651,7 @@
       initialEquipmentCost,
       replacementCost,
       materialCosts,
+      expectedConsumption,
       steps,
       refineComparisons: buildRefineComparisons(steps, actionsByKey, policy, values, startKey, replacementCost),
       risk,
@@ -639,6 +670,9 @@
     const costs = [];
     const attempts = [];
     const breakCounts = [];
+    const materialSamples = {};
+    const zenyFeeSamples = [];
+    const replacementCostSamples = [];
     let truncated = 0;
 
     for (let run = 0; run < runs; run += 1) {
@@ -646,6 +680,9 @@
       let totalCost = route.initialEquipmentCost;
       let attemptCount = 0;
       let breaks = 0;
+      let runZenyFee = 0;
+      let runReplacementCost = 0;
+      const runMaterials = {};
 
       while (!isAtGoal(state, route.target) && attemptCount < maxAttempts) {
         const key = stateKey(state);
@@ -655,12 +692,15 @@
           break;
         }
         totalCost += action.cost;
+        runZenyFee += action.zenyFee ?? 0;
+        addBundle(runMaterials, action.materialBundle);
         attemptCount += 1;
 
         if (rng() < action.rate) {
           state = { ...action.success };
         } else if (action.fail === "break") {
           totalCost += route.replacementCost;
+          runReplacementCost += route.replacementCost;
           breaks += 1;
           state = { ...route.start };
         } else {
@@ -672,6 +712,9 @@
       costs.push(totalCost);
       attempts.push(attemptCount);
       breakCounts.push(breaks);
+      zenyFeeSamples.push(runZenyFee);
+      replacementCostSamples.push(runReplacementCost);
+      recordMaterialSamples(materialSamples, runMaterials, run);
     }
 
     costs.sort((a, b) => a - b);
@@ -693,8 +736,41 @@
       medianAttempts: percentile(attempts, 0.5),
       averageBreaks: average(breakCounts),
       p95Breaks: percentile(breakCounts, 0.95),
+      materialUsage: summarizeMaterialSamples(materialSamples),
+      zenyUsage: summarizeSamples(zenyFeeSamples),
+      replacementUsage: summarizeSamples(replacementCostSamples),
       truncated,
       histogram: buildHistogram(costs, 22),
+    };
+  }
+
+  function recordMaterialSamples(samplesByKey, runMaterials, runIndex) {
+    for (const key of Object.keys(samplesByKey)) {
+      samplesByKey[key].push(runMaterials[key] ?? 0);
+    }
+    for (const [key, qty] of Object.entries(runMaterials)) {
+      if (samplesByKey[key]) continue;
+      samplesByKey[key] = Array(runIndex).fill(0);
+      samplesByKey[key].push(qty);
+    }
+  }
+
+  function summarizeMaterialSamples(samplesByKey) {
+    const usage = {};
+    for (const [key, samples] of Object.entries(samplesByKey)) {
+      usage[key] = summarizeSamples(samples);
+    }
+    return usage;
+  }
+
+  function summarizeSamples(samples) {
+    if (!samples.length) return { average: 0, p90: 0, p95: 0, max: 0 };
+    const sorted = [...samples].sort((a, b) => a - b);
+    return {
+      average: average(sorted),
+      p90: percentile(sorted, 0.9),
+      p95: percentile(sorted, 0.95),
+      max: sorted[sorted.length - 1],
     };
   }
 
@@ -817,6 +893,65 @@
     return values;
   }
 
+  function evaluatePolicyConsumption(states, target, policy, startKey, replacementCost) {
+    const materialKeys = new Set();
+    for (const state of states) {
+      if (isAtGoal(state, target)) continue;
+      const action = policy[stateKey(state)];
+      for (const key of Object.keys(action?.materialBundle ?? {})) materialKeys.add(key);
+    }
+
+    const materials = {};
+    for (const key of materialKeys) {
+      const values = evaluatePolicyScalar(states, target, policy, startKey, (action) => action.materialBundle?.[key] ?? 0);
+      const expected = values[startKey] ?? 0;
+      if (Number.isFinite(expected) && Math.abs(expected) > EPSILON) materials[key] = expected;
+    }
+
+    const zenyFeeValues = evaluatePolicyScalar(states, target, policy, startKey, (action) => action.zenyFee ?? 0);
+    const replacementValues = evaluatePolicyScalar(
+      states,
+      target,
+      policy,
+      startKey,
+      (action) => (action.fail === "break" ? (1 - action.rate) * replacementCost : 0),
+    );
+
+    return {
+      materials,
+      zenyFee: zenyFeeValues[startKey] ?? 0,
+      replacementCost: replacementValues[startKey] ?? 0,
+    };
+  }
+
+  function evaluatePolicyScalar(states, target, policy, startKey, immediateValue) {
+    const activeStates = states.filter((state) => !isAtGoal(state, target) && policy[stateKey(state)]);
+    const indexByKey = new Map(activeStates.map((state, index) => [stateKey(state), index]));
+    const size = activeStates.length;
+    const matrix = Array.from({ length: size }, () => Array(size).fill(0));
+    const rhs = Array(size).fill(0);
+
+    for (const state of activeStates) {
+      const key = stateKey(state);
+      const row = indexByKey.get(key);
+      const action = policy[key];
+      matrix[row][row] = 1;
+      rhs[row] = immediateValue(action, state);
+      addTransition(matrix[row], indexByKey, action.success, -action.rate);
+      if (action.fail === "break") {
+        addTransition(matrix[row], indexByKey, parseState(startKey), -(1 - action.rate));
+      } else {
+        addTransition(matrix[row], indexByKey, action.fail, -(1 - action.rate));
+      }
+    }
+
+    const solution = solveLinearSystem(matrix, rhs);
+    const values = {};
+    for (const state of states) values[stateKey(state)] = isAtGoal(state, target) ? 0 : Infinity;
+    for (const [key, index] of indexByKey.entries()) values[key] = solution[index];
+    return values;
+  }
+
   function addTransition(row, indexByKey, state, coefficient) {
     const key = stateKey(state);
     const index = indexByKey.get(key);
@@ -899,7 +1034,10 @@
         cost: action.cost,
         remainingExpectedCost: values[key],
         materials: action.materials,
+        materialBundle: action.materialBundle,
         zenyFee: action.zenyFee,
+        actionZenyFee: action.actionZenyFee,
+        consumption: action.consumption,
         breaks: action.breaks,
         failText: failText(action.fail, current),
       });
@@ -1288,6 +1426,8 @@
     quoteCommission,
     __internals: {
       buildActions,
+      materialBundleCost,
+      evaluatePolicyConsumption,
       refineRates,
       refineFailState,
       stateKey,
@@ -1300,7 +1440,7 @@
     module.exports = api;
   }
 
-  if (typeof module === "undefined" || !module.exports) {
+  if (typeof window !== "undefined") {
     globalScope.ROSimulator = api;
   }
 })(typeof window !== "undefined" ? window : globalThis);

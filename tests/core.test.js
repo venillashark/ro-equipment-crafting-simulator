@@ -10,6 +10,10 @@ const {
   __internals,
 } = require("../src/core.cjs");
 
+function assertClose(actual, expected, epsilon = 1e-6) {
+  assert.ok(Math.abs(actual - expected) <= epsilon, `${actual} should be close to ${expected}`);
+}
+
 test("升階材料成本重現既有 Markdown 比較結果", () => {
   const costs = resolveMaterialCost(DEFAULT_CONFIG.materials);
 
@@ -61,6 +65,25 @@ test("濃縮箱子會換算單個價格並自動製作濃縮乙太材料", () =>
   assert.equal(costs.concentratedEtherOridecon.method, "自行製作");
 });
 
+test("材料 bundle 成本會保留結構化材料數量", () => {
+  const costs = resolveMaterialCost({
+    ...DEFAULT_CONFIG.materials,
+    etherOridecon: 1000,
+    blessing: 3000,
+  });
+  const bundle = __internals.materialBundleCost(costs, {
+    etherOridecon: 2,
+    blessing: 3,
+  });
+
+  assert.equal(bundle.total, 11000);
+  assert.deepEqual(bundle.bundle, {
+    etherOridecon: 2,
+    blessing: 3,
+  });
+  assert.deepEqual(bundle.parts, ["乙太神之金屬 x2", "鐵匠的祝福 x3"]);
+});
+
 test("+10 前五級武器濃縮精煉失敗退 1，一般精煉退 3", () => {
   const state = { grade: "none", refine: 7 };
 
@@ -84,6 +107,7 @@ test("+10 後爆裝會把重新取得裝備成本計入期望值", () => {
       startRefine: 10,
       targetGrade: "none",
       targetRefine: 11,
+      protectionPolicy: "never",
     },
     {},
     prices,
@@ -93,6 +117,9 @@ test("+10 後爆裝會把重新取得裝備成本計入期望值", () => {
   assert.equal(result.steps[0].materialKind, "advanced");
   assert.equal(result.steps[0].breaks, true);
   assert.equal(Math.round(result.routeExpectedCost), Math.round((101000 + 0.85 * 1000000) / 0.15));
+  assertClose(result.expectedConsumption.materials.highConcentratedEtherOridecon, 1 / 0.15);
+  assertClose(result.expectedConsumption.zenyFee, 100000 / 0.15);
+  assertClose(result.expectedConsumption.replacementCost, (0.85 * 1000000) / 0.15);
 });
 
 test("A +13 高精煉只使用高階材料，不需要一般高精煉礦石", () => {
@@ -152,6 +179,61 @@ test("升階成功後階級提升且精煉值歸零", () => {
   assert.deepEqual(result.steps[0].success, { grade: "D", refine: 0 });
 });
 
+test("100% 成功路線的期望材料等於每步消耗加總", () => {
+  const result = findBestRoute(
+    {
+      equipmentType: "weapon5",
+      equipmentPrice: 0,
+      ownedEquipment: true,
+      startGrade: "none",
+      startRefine: 0,
+      targetGrade: "none",
+      targetRefine: 3,
+      refineMaterialPolicy: "normalOnly",
+      protectionPolicy: "never",
+    },
+    {},
+    {
+      ...DEFAULT_CONFIG.materials,
+      etherOridecon: 1000,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.steps.length, 3);
+  assert.equal(result.expectedConsumption.materials.etherOridecon, 3);
+  assert.equal(result.expectedConsumption.zenyFee, 150000);
+  assert.equal(result.expectedConsumption.replacementCost, 0);
+});
+
+test("保護自迴圈會把材料期望放大為 1 / 成功率", () => {
+  const result = findBestRoute(
+    {
+      equipmentType: "weapon5",
+      equipmentPrice: 1000000,
+      ownedEquipment: true,
+      startGrade: "none",
+      startRefine: 10,
+      targetGrade: "none",
+      targetRefine: 11,
+      protectionPolicy: "always",
+    },
+    {},
+    {
+      ...DEFAULT_CONFIG.materials,
+      highConcentratedEtherOridecon: 1000,
+      blessing: 1,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.steps[0].protected, true);
+  assertClose(result.expectedConsumption.materials.highConcentratedEtherOridecon, 1 / 0.15);
+  assertClose(result.expectedConsumption.materials.blessing, 4 / 0.15);
+  assertClose(result.expectedConsumption.zenyFee, 100000 / 0.15);
+  assert.equal(result.expectedConsumption.replacementCost, 0);
+});
+
 test("升階加成使用庇佑乙太星塵，不會吃一般乙太星塵價格", () => {
   const withoutBlessed = findBestRoute(
     {
@@ -184,6 +266,10 @@ test("升階加成使用庇佑乙太星塵，不會吃一般乙太星塵價格",
   assert.equal(withBlessed.ok, true);
   assert.equal(withoutBlessed.steps.some((step) => step.label.includes("庇佑")), false);
   assert.equal(withBlessed.steps.some((step) => step.label.includes("庇佑")), true);
+  assert.equal(withBlessed.steps[0].materialBundle.azureGem, 1);
+  assert.equal(withBlessed.steps[0].materialBundle.blessedEtherStardust, 90);
+  assert.equal(withBlessed.expectedConsumption.materials.azureGem, 1);
+  assert.equal(withBlessed.expectedConsumption.materials.blessedEtherStardust, 90);
 });
 
 test("精煉材料策略可以排除濃縮乙太材料", () => {
@@ -259,4 +345,11 @@ test("蒙地卡羅模擬會輸出平均、中位數、P90、P95、最慘成本",
   assert.equal(result.p90, 153000);
   assert.equal(result.p95, 153000);
   assert.equal(result.worst, 153000);
+  assert.equal(result.materialUsage.etherOridecon.average, 3);
+  assert.equal(result.materialUsage.etherOridecon.p90, 3);
+  assert.equal(result.materialUsage.etherOridecon.p95, 3);
+  assert.equal(result.materialUsage.etherOridecon.max, 3);
+  assert.equal(result.zenyUsage.average, 150000);
+  assert.equal(result.zenyUsage.p95, 150000);
+  assert.equal(result.replacementUsage.average, 0);
 });

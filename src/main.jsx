@@ -156,6 +156,14 @@ function formatNumber(value, digits = 0) {
   return value.toLocaleString("zh-TW", { maximumFractionDigits: digits });
 }
 
+function formatQuantity(value) {
+  if (!Number.isFinite(value)) return "-";
+  if (value > 0 && value < 0.01) return "<0.01";
+  const abs = Math.abs(value);
+  const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
+  return formatNumber(value, digits);
+}
+
 function formatPercent(value) {
   if (!Number.isFinite(value)) return "-";
   return `${(value * 100).toFixed(value > 0 && value < 0.1 ? 1 : 0)}%`;
@@ -222,6 +230,35 @@ function zenyWithTwd(value, exchangeRate) {
     zeny: formatZeny(value),
     twd: formatTwdFromZeny(value, exchangeRate),
   };
+}
+
+function downloadConsumptionJson(route, simulation) {
+  if (!route?.ok) return;
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const payload = {
+    version: 1,
+    updatedAt: `${yyyy}-${mm}-${dd}`,
+    note: "材料消耗為期望/模擬統計，不代表單次必定消耗。材料為 action 層級，未展開製作配方。",
+    target: route.target,
+    routeExpectedConsumption: route.expectedConsumption,
+    simulationMaterialUsage: simulation?.materialUsage ?? null,
+    simulationZenyUsage: simulation?.zenyUsage ?? null,
+    simulationReplacementUsage: simulation?.replacementUsage ?? null,
+  };
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `ro-material-consumption-${yyyy}${mm}${dd}.json`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function App() {
@@ -482,6 +519,12 @@ function App() {
 
           <section className="analysis-grid lower">
             <CostSummary mode={state.mode} quote={quote} route={route} exchangeRate={exchangeRate} />
+            <MaterialConsumptionPanel
+              route={route}
+              simulation={displaySimulation}
+              simulationStatus={simulationStatus}
+              onExport={() => downloadConsumptionJson(route, displaySimulation)}
+            />
           </section>
         </section>
       </main>
@@ -998,6 +1041,100 @@ function CostSummary({ mode, quote, route, exchangeRate }) {
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+function MaterialConsumptionPanel({ route, simulation, simulationStatus, onExport }) {
+  if (!route.ok) {
+    return (
+      <section className="card panel consumption-panel">
+        <PanelHeader eyebrow="Materials" title="材料消耗預估" />
+        <div className="notice warn">{route.error}</div>
+      </section>
+    );
+  }
+
+  const expected = route.expectedConsumption ?? { materials: {}, zenyFee: 0, replacementCost: 0 };
+  const routeMaterials = expected.materials ?? {};
+  const simulationUsage = simulation?.materialUsage ?? {};
+  const materialKeys = [...new Set([...Object.keys(routeMaterials), ...Object.keys(simulationUsage)])]
+    .sort((a, b) => (MATERIALS[a] ?? a).localeCompare(MATERIALS[b] ?? b, "zh-Hant"));
+  const simulationLabel = simulationStatus === "stale" ? "需重新模擬" : "尚未模擬";
+  const hasRows = materialKeys.length > 0;
+
+  function simulationValue(key, metric) {
+    if (!simulation) return simulationLabel;
+    return formatQuantity(simulationUsage[key]?.[metric] ?? 0);
+  }
+
+  function simulationZeny(statKey, label = simulationLabel) {
+    if (!simulation) return label;
+    return formatZeny(simulation.zenyUsage?.[statKey] ?? 0);
+  }
+
+  function simulationReplacement(statKey, label = simulationLabel) {
+    if (!simulation) return label;
+    return formatZeny(simulation.replacementUsage?.[statKey] ?? 0);
+  }
+
+  return (
+    <section className="card panel consumption-panel">
+      <div className="card-head">
+        <div>
+          <p className="eyebrow">Materials</p>
+          <h2>材料消耗預估</h2>
+        </div>
+        <div className="card-actions">
+          <span className="pill">期望值 / 樣本統計</span>
+          <button className="btn secondary small" type="button" onClick={onExport}>匯出消耗 JSON</button>
+        </div>
+      </div>
+
+      <div className="consumption-note">
+        以下為期望值與模擬統計，不代表單次必定消耗。材料為 action 層級，未展開製作配方或箱子拆解。
+      </div>
+
+      <div className="consumption-metrics">
+        <Metric label="期望手續費" value={formatZeny(expected.zenyFee ?? 0)} />
+        <Metric label="期望重買成本" value={formatZeny(expected.replacementCost ?? 0)} tone={expected.replacementCost > 0 ? "bad" : ""} />
+        <Metric label="模擬平均手續費" value={simulationZeny("average")} />
+        <Metric label="模擬 P95 重買成本" value={simulationReplacement("p95")} tone={simulation?.replacementUsage?.p95 > 0 ? "bad" : ""} />
+      </div>
+
+      {!hasRows ? (
+        <div className="empty-state">目前路線沒有額外材料消耗。</div>
+      ) : (
+        <div className="table-wrap consumption-table">
+          <table>
+            <thead>
+              <tr>
+                <th>材料</th>
+                <th className="number">推薦路線期望</th>
+                <th className="number">模擬平均</th>
+                <th className="number">P90 準備量</th>
+                <th className="number">P95 準備量</th>
+                <th className="number">最大樣本</th>
+              </tr>
+            </thead>
+            <tbody>
+              {materialKeys.map((key) => (
+                <tr key={key}>
+                  <td>
+                    <span className="material-name">{MATERIALS[key] ?? key}</span>
+                    <code>{key}</code>
+                  </td>
+                  <td className="number">{formatQuantity(routeMaterials[key] ?? 0)}</td>
+                  <td className={`number ${!simulation ? "usage-pending" : ""}`}>{simulationValue(key, "average")}</td>
+                  <td className={`number ${!simulation ? "usage-pending" : ""}`}>{simulationValue(key, "p90")}</td>
+                  <td className={`number ${!simulation ? "usage-pending" : ""}`}>{simulationValue(key, "p95")}</td>
+                  <td className={`number ${!simulation ? "usage-pending" : ""}`}>{simulationValue(key, "max")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

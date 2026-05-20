@@ -625,6 +625,10 @@ select option {
   grid-column: 1 / -1;
 }
 
+.analysis-grid.lower .consumption-panel {
+  grid-column: 1 / -1;
+}
+
 .sim-toolbar {
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr) auto;
@@ -965,6 +969,52 @@ select option {
   background: linear-gradient(90deg, var(--blue), var(--gold));
 }
 
+.consumption-note {
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.55;
+}
+
+.consumption-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.consumption-table {
+  max-height: 430px;
+}
+
+.consumption-table table {
+  min-width: 760px;
+}
+
+.material-name {
+  display: block;
+  color: var(--ink);
+  font-weight: 950;
+}
+
+td code {
+  display: inline-block;
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.usage-pending {
+  color: var(--gold);
+  font-weight: 950;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1269,6 +1319,7 @@ tr.chosen td:first-child {
   .sim-toolbar,
   .stat-grid,
   .stat-grid.compact,
+  .consumption-metrics,
   .step-stats,
   .preview-grid,
   .price-grid {
