@@ -72,7 +72,7 @@ test("+10 後爆裝會把重新取得裝備成本計入期望值", () => {
   const prices = {
     ...DEFAULT_CONFIG.materials,
     etherBradium: 1000,
-    highConcentratedEtherOridecon: 0,
+    highConcentratedEtherOridecon: 1000,
     blessing: 0,
   };
   const result = findBestRoute(
@@ -90,8 +90,43 @@ test("+10 後爆裝會把重新取得裝備成本計入期望值", () => {
   );
 
   assert.equal(result.ok, true);
+  assert.equal(result.steps[0].materialKind, "advanced");
   assert.equal(result.steps[0].breaks, true);
-  assert.equal(Math.round(result.routeExpectedCost), Math.round((101000 + 0.92 * 1000000) / 0.08));
+  assert.equal(Math.round(result.routeExpectedCost), Math.round((101000 + 0.85 * 1000000) / 0.15));
+});
+
+test("A +13 高精煉只使用高階材料，不需要一般高精煉礦石", () => {
+  const prices = {
+    ...DEFAULT_CONFIG.materials,
+    etherOridecon: 1000,
+    concentratedEtherOridecon: 1000,
+    etherBradium: 0,
+    highConcentratedEtherOridecon: 1000,
+    highDensityEtherBradium: 0,
+    blessedEtherStardust: 1,
+    blessing: 1,
+  };
+  const result = findBestRoute(
+    {
+      equipmentType: "weapon5",
+      equipmentPrice: 10000000,
+      ownedEquipment: true,
+      startGrade: "none",
+      startRefine: 0,
+      targetGrade: "A",
+      targetRefine: 13,
+      refineMaterialPolicy: "normalOnly",
+      protectionPolicy: "auto",
+    },
+    {},
+    prices,
+  );
+
+  assert.equal(result.ok, true);
+  const highRefineSteps = result.steps.filter((step) => step.type === "refine" && step.from.refine >= 10);
+  assert.equal(highRefineSteps.length > 0, true);
+  assert.equal(highRefineSteps.every((step) => step.materialKind === "advanced"), true);
+  assert.equal(highRefineSteps.some((step) => step.materials.join("、").includes("乙太鈽鐳礦石")), false);
 });
 
 test("升階成功後階級提升且精煉值歸零", () => {

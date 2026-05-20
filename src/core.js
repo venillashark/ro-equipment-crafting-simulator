@@ -435,7 +435,11 @@
     if (!rates) return [];
 
     const materials = refineMaterials(context.input.equipmentType, state.refine);
-    const options = [{ kind: "normal", material: materials.normal, rate: rates.normal, name: "一般乙太材料" }];
+    const highRefineOnly = state.refine >= 10;
+    const options = [];
+    if (!highRefineOnly) {
+      options.push({ kind: "normal", material: materials.normal, rate: rates.normal, name: "一般乙太材料" });
+    }
     if (rates.advanced) {
       options.push({ kind: "advanced", material: materials.advanced, rate: rates.advanced, name: "濃縮/高階乙太材料" });
     }
@@ -446,6 +450,7 @@
     const materialPolicy = context.input.refineMaterialPolicy ?? "auto";
     const protectionPolicy = context.input.protectionPolicy ?? "auto";
     const filteredOptions = options.filter((option) => {
+      if (highRefineOnly) return true;
       if (materialPolicy === "normalOnly") return option.kind === "normal";
       if (materialPolicy === "advancedOnly") return option.kind === "advanced" || !rates.advanced;
       return true;
@@ -744,7 +749,7 @@
       const key = stateKey(state);
       if (isAtGoal(state, target)) continue;
       const actions = actionsByKey[key] ?? [];
-      policy[key] = actions.reduce((best, action) => (!best || action.cost < best.cost ? action : best), null);
+      policy[key] = chooseInitialPolicyAction(actions);
     }
 
     let values = {};
@@ -771,6 +776,16 @@
 
     values = evaluatePolicy(states, target, policy, startKey, replacementCost, "cost");
     return { values, policy };
+  }
+
+  function chooseInitialPolicyAction(actions) {
+    return actions.reduce((best, action) => {
+      if (!best) return action;
+      if (action.breaks !== best.breaks) return action.breaks ? best : action;
+      if (action.protected !== best.protected) return action.protected ? action : best;
+      if (action.rate !== best.rate) return action.rate > best.rate ? action : best;
+      return action.cost < best.cost ? action : best;
+    }, null);
   }
 
   function evaluatePolicy(states, target, policy, startKey, replacementCost, metric) {
