@@ -18,7 +18,10 @@ const STORAGE_KEY = "ro-crafting-simulator-v2";
 
 const PRICE_SECTIONS = [
   {
+    id: "craft",
     title: "升階與製作材料",
+    badge: "常用",
+    defaultOpen: true,
     keys: [
       "etherStardust",
       "blessedEtherStardust",
@@ -34,7 +37,10 @@ const PRICE_SECTIONS = [
     ],
   },
   {
+    id: "weapon",
     title: "五級武器精煉",
+    badge: "武器",
+    defaultOpen: true,
     keys: [
       "oridecon",
       "etherOridecon",
@@ -45,7 +51,10 @@ const PRICE_SECTIONS = [
     ],
   },
   {
+    id: "armor",
     title: "二級防具精煉",
+    badge: "防具",
+    defaultOpen: false,
     keys: [
       "elunium",
       "etherElunium",
@@ -55,7 +64,13 @@ const PRICE_SECTIONS = [
       "highDensityEtherCarnium",
     ],
   },
-  { title: "保護材料", keys: ["blessing"] },
+  {
+    id: "protect",
+    title: "保護材料",
+    badge: "風險",
+    defaultOpen: true,
+    keys: ["blessing"],
+  },
 ];
 
 const defaultTarget = {
@@ -90,6 +105,7 @@ function loadInitialState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     return {
+      mode: saved.mode === "commission" ? "commission" : "self",
       prices: { ...demoPrices, ...(saved.prices || saved.materials || {}) },
       target: { ...defaultTarget, ...(saved.target || {}) },
       commission: { ...defaultCommission, ...(saved.commission || saved.commissionSettings || {}) },
@@ -100,6 +116,7 @@ function loadInitialState() {
     };
   } catch (_error) {
     return {
+      mode: "self",
       prices: demoPrices,
       target: defaultTarget,
       commission: defaultCommission,
@@ -132,6 +149,45 @@ function numberValue(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function gradeIndex(gradeId) {
+  return GRADES.findIndex((grade) => grade.id === gradeId);
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function createSimulationSignature(state) {
+  return stableStringify({
+    commission: state.commission,
+    prices: state.prices,
+    simulationSettings: state.simulationSettings,
+    target: state.target,
+  });
+}
+
+// Risk rules: break outcomes are high risk; then low success rates are high (<40%)
+// or medium (<70%); protected/high-success steps are treated as low risk.
+function getStepRiskLevel(step) {
+  if (step.breaks) return { level: "high", label: "高風險", hint: "失敗會爆裝" };
+  if (step.rate < 0.4) return { level: "high", label: "高風險", hint: "成功率偏低" };
+  if (step.rate < 0.7) return { level: "medium", label: "中風險", hint: "需要留意波動" };
+  return { level: "low", label: "低風險", hint: step.protected ? "有保護" : "成功率穩定" };
+}
+
+function simulationMetric(simulation, status, key, formatter = formatZeny) {
+  if (status === "stale") return "需重新模擬";
+  if (!simulation) return "尚未模擬";
+  return formatter(simulation[key]);
+}
+
 function App() {
   const [state, setState] = useState(loadInitialState);
   const [activeTab, setActiveTab] = useState("refine");
@@ -145,6 +201,10 @@ function App() {
 
   const materialCosts = useMemo(() => resolveMaterialCost(state.prices), [state.prices]);
   const quote = useMemo(() => quoteCommission(route, state.commission), [route, state.commission]);
+  const simulationSignature = useMemo(() => createSimulationSignature(state), [state]);
+  const simulationIsFresh = simulation?.ok && simulation.signature === simulationSignature;
+  const simulationStatus = simulation?.ok ? (simulationIsFresh ? "fresh" : "stale") : "empty";
+  const displaySimulation = simulationIsFresh ? simulation : null;
 
   function updateState(next) {
     setState((current) => {
@@ -152,6 +212,10 @@ function App() {
       saveState(resolved);
       return resolved;
     });
+  }
+
+  function updateMode(mode) {
+    updateState((current) => ({ ...current, mode }));
   }
 
   function updateTarget(key, value) {
@@ -184,6 +248,7 @@ function App() {
 
   function resetDefaults() {
     const next = {
+      mode: "self",
       prices: demoPrices,
       target: defaultTarget,
       commission: defaultCommission,
@@ -195,10 +260,11 @@ function App() {
   }
 
   function runSimulation() {
+    const signature = createSimulationSignature(state);
     setIsSimulating(true);
     window.setTimeout(() => {
       const result = simulateMonteCarlo(state.target, {}, state.prices, state.simulationSettings);
-      setSimulation(result);
+      setSimulation({ ...result, signature });
       setIsSimulating(false);
     }, 20);
   }
@@ -207,65 +273,87 @@ function App() {
     document.getElementById("price-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  const displaySimulation = simulation?.ok ? simulation : null;
-
   return (
-    <div className="shell">
+    <div className={`shell mode-${state.mode}`}>
       <header className="app-nav">
         <div className="brand">
           <div className="mark">RO</div>
           <div>
-            <p className="eyebrow">React + Vite V2</p>
-            <h1>裝備製作成本與代衝報價模擬器</h1>
+            <p className="eyebrow">Cost Lab</p>
+            <h1>裝備製作模擬器</h1>
+            <p className="subtitle">成本試算 / 風險分析 / 代衝報價</p>
           </div>
         </div>
-        <div className="actions">
-          <button className="btn secondary" type="button" onClick={scrollToPrices}>材料價格</button>
-          <button className="btn secondary" type="button" onClick={resetDefaults}>還原預設</button>
-          <button className="btn" type="button" onClick={runSimulation}>
-            {isSimulating ? "模擬中..." : "執行模擬"}
-          </button>
+
+        <div className="nav-tools">
+          <ModeSwitch mode={state.mode} updateMode={updateMode} />
+          <div className="actions">
+            <button className="btn secondary" type="button" onClick={scrollToPrices}>材料價格</button>
+            <button className="btn secondary" type="button" onClick={resetDefaults}>還原預設</button>
+            <button className="btn" type="button" disabled={!route.ok || isSimulating} onClick={runSimulation}>
+              {isSimulating ? "模擬中..." : "執行模擬"}
+            </button>
+          </div>
         </div>
       </header>
+
+      <KpiStrip
+        mode={state.mode}
+        quote={quote}
+        route={route}
+        simulation={displaySimulation}
+        simulationStatus={simulationStatus}
+      />
 
       <main className="dashboard">
         <aside className="sidebar">
           <TargetPanel target={state.target} updateTarget={updateTarget} />
           <StrategyPanel target={state.target} updateTarget={updateTarget} />
-          <CommissionPanel commission={state.commission} simulationSettings={state.simulationSettings} updateCommission={updateCommission} updateSimulationSetting={updateSimulationSetting} />
+          <CommissionPanel
+            commission={state.commission}
+            simulationSettings={state.simulationSettings}
+            updateCommission={updateCommission}
+            updateSimulationSetting={updateSimulationSetting}
+          />
+          <section id="price-panel" className="card panel price-card">
+            <PanelHeader eyebrow="Market" title="材料價格" meta="自動保存" />
+            <PriceEditor prices={state.prices} updatePrice={updatePrice} />
+          </section>
         </aside>
 
         <section className="main">
-          <section className="hero-grid">
-            <OverviewPanel route={route} simulation={displaySimulation} />
-            <QuotePanel quote={quote} simulation={displaySimulation} route={route} quoteBasis={state.commission.quoteBasis} />
-          </section>
+          <ModeInsight
+            mode={state.mode}
+            quote={quote}
+            quoteBasis={state.commission.quoteBasis}
+            route={route}
+            simulation={displaySimulation}
+            simulationStatus={simulationStatus}
+          />
 
           <section className="analysis-grid">
-            <MonteCarloPanel route={route} simulation={simulation} settings={state.simulationSettings} updateSimulationSetting={updateSimulationSetting} runSimulation={runSimulation} isSimulating={isSimulating} />
+            <MonteCarloPanel
+              route={route}
+              simulation={displaySimulation}
+              simulationStatus={simulationStatus}
+              settings={state.simulationSettings}
+              updateSimulationSetting={updateSimulationSetting}
+              runSimulation={runSimulation}
+              isSimulating={isSimulating}
+            />
             <RoutePanel route={route} />
           </section>
 
-          <section id="price-panel" className="card price-card">
-            <div className="card-head">
-              <div>
-                <p className="eyebrow">Market Prices</p>
-                <h2>材料價格</h2>
-              </div>
-              <span className="pill">會自動保存</span>
-            </div>
-            <PriceEditor prices={state.prices} updatePrice={updatePrice} />
-          </section>
-
-          <section className="card table-card">
-            <div className="tabs">
-              <button className={`tab ${activeTab === "refine" ? "active" : ""}`} type="button" onClick={() => setActiveTab("refine")}>精煉比較</button>
-              <button className={`tab ${activeTab === "materials" ? "active" : ""}`} type="button" onClick={() => setActiveTab("materials")}>材料成本</button>
-              <button className={`tab ${activeTab === "samples" ? "active" : ""}`} type="button" onClick={() => setActiveTab("samples")}>模擬摘要</button>
-            </div>
-            {activeTab === "refine" && <RefineComparisonTable route={route} />}
-            {activeTab === "materials" && <MaterialTable materialCosts={materialCosts} />}
-            {activeTab === "samples" && <SimulationSummary simulation={simulation} />}
+          <section className="analysis-grid lower">
+            <CostSummary mode={state.mode} quote={quote} route={route} />
+            <AnalysisTabs
+              activeTab={activeTab}
+              materialCosts={materialCosts}
+              route={route}
+              setActiveTab={setActiveTab}
+              simulation={displaySimulation}
+              simulationStatus={simulationStatus}
+            />
           </section>
         </section>
       </main>
@@ -273,16 +361,125 @@ function App() {
   );
 }
 
+function ModeSwitch({ mode, updateMode }) {
+  return (
+    <div className="mode-switch" aria-label="模式切換">
+      <button
+        className={mode === "self" ? "active" : ""}
+        type="button"
+        aria-pressed={mode === "self"}
+        onClick={() => updateMode("self")}
+      >
+        自用成本模式
+      </button>
+      <button
+        className={mode === "commission" ? "active" : ""}
+        type="button"
+        aria-pressed={mode === "commission"}
+        onClick={() => updateMode("commission")}
+      >
+        代衝報價模式
+      </button>
+    </div>
+  );
+}
+
+function PanelHeader({ eyebrow, title, meta }) {
+  return (
+    <div className="card-head">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h2>{title}</h2>
+      </div>
+      {meta && <span className="pill">{meta}</span>}
+    </div>
+  );
+}
+
+function KpiStrip({ mode, quote, route, simulation, simulationStatus }) {
+  const riskValue = route.ok
+    ? route.risk.hasBreakRisk
+      ? formatPercent(route.risk.singlePassBreakRisk)
+      : "低"
+    : "無法計算";
+  const riskSub = route.ok ? `期望爆裝 ${formatNumber(route.risk.expectedBreaks, 2)} 次` : route.error;
+
+  return (
+    <section className="kpi-strip" aria-label="重要指標">
+      <KpiCard
+        id="expected"
+        featured={mode === "self"}
+        label="理論期望成本"
+        marker="EV"
+        value={route.ok ? formatZeny(route.expectedCost) : "無法計算"}
+        sub={route.ok ? `${route.steps.length} 個成功路徑階段` : route.error}
+      />
+      <KpiCard
+        id="sim-average"
+        featured={mode === "self"}
+        label="模擬平均成本"
+        marker="MC"
+        tone={simulationStatus === "stale" ? "stale" : "blue"}
+        value={simulationMetric(simulation, simulationStatus, "average")}
+        sub={simulation ? `${formatNumber(simulation.runs)} 次模擬` : "Monte Carlo"}
+      />
+      <KpiCard
+        id="p90"
+        featured={mode === "commission"}
+        label="P90"
+        marker="P90"
+        tone={simulationStatus === "stale" ? "stale" : "gold"}
+        value={simulationMetric(simulation, simulationStatus, "p90")}
+        sub="高成本分位"
+      />
+      <KpiCard
+        id="p95"
+        featured={mode === "commission"}
+        label="P95"
+        marker="P95"
+        tone={simulationStatus === "stale" ? "stale" : "gold"}
+        value={simulationMetric(simulation, simulationStatus, "p95")}
+        sub="保守成本分位"
+      />
+      <KpiCard
+        id="quote"
+        featured={mode === "commission"}
+        label="建議報價"
+        marker="Z"
+        tone="gold"
+        value={quote.ok ? formatZeny(quote.suggested) : "無法計算"}
+        sub={quote.ok ? `低標 ${formatZeny(quote.low)}` : quote.error}
+      />
+      <KpiCard
+        id="risk"
+        featured={mode === "self"}
+        label="爆裝風險"
+        marker="%"
+        tone={route.ok && route.risk.hasBreakRisk ? "red" : "green"}
+        value={riskValue}
+        sub={riskSub}
+      />
+    </section>
+  );
+}
+
+function KpiCard({ featured = false, label, marker, sub, tone = "", value }) {
+  return (
+    <article className={`kpi-card ${tone} ${featured ? "featured" : ""}`}>
+      <div className="kpi-top">
+        <span>{label}</span>
+        <i>{marker}</i>
+      </div>
+      <strong>{value}</strong>
+      <small>{sub}</small>
+    </article>
+  );
+}
+
 function TargetPanel({ target, updateTarget }) {
   return (
-    <section className="card pad">
-      <div className="card-head">
-        <div>
-          <p className="eyebrow">Build Target</p>
-          <h2>養成目標</h2>
-        </div>
-        <span className="pill">已自動保存</span>
-      </div>
+    <section className="card panel">
+      <PanelHeader eyebrow="Target" title="目標設定" meta="已保存" />
       <div className="form-grid one">
         <label>裝備類型
           <select value={target.equipmentType} onChange={(event) => updateTarget("equipmentType", event.target.value)}>
@@ -291,11 +488,11 @@ function TargetPanel({ target, updateTarget }) {
           </select>
         </label>
         <label>裝備基礎價格
-          <input value={target.equipmentPrice} onChange={(event) => updateTarget("equipmentPrice", numberValue(event.target.value))} />
+          <input inputMode="numeric" value={target.equipmentPrice} onChange={(event) => updateTarget("equipmentPrice", numberValue(event.target.value))} />
         </label>
         <label className="check">
           <input type="checkbox" checked={target.ownedEquipment} onChange={(event) => updateTarget("ownedEquipment", event.target.checked)} />
-          已持有第一件裝備
+          <span>已持有第一件裝備</span>
         </label>
       </div>
       <div className="form-grid top-gap">
@@ -322,13 +519,8 @@ function TargetPanel({ target, updateTarget }) {
 
 function StrategyPanel({ target, updateTarget }) {
   return (
-    <section className="card pad">
-      <div className="card-head">
-        <div>
-          <p className="eyebrow">Strategy</p>
-          <h2>路線策略</h2>
-        </div>
-      </div>
+    <section className="card panel">
+      <PanelHeader eyebrow="Strategy" title="路線策略" />
       <div className="form-grid one">
         <label>精煉材料
           <select value={target.refineMaterialPolicy} onChange={(event) => updateTarget("refineMaterialPolicy", event.target.value)}>
@@ -351,13 +543,8 @@ function StrategyPanel({ target, updateTarget }) {
 
 function CommissionPanel({ commission, simulationSettings, updateCommission, updateSimulationSetting }) {
   return (
-    <section className="card pad">
-      <div className="card-head">
-        <div>
-          <p className="eyebrow">Pricing</p>
-          <h2>代衝參數</h2>
-        </div>
-      </div>
+    <section className="card panel">
+      <PanelHeader eyebrow="Pricing" title="代衝參數" />
       <div className="form-grid">
         <label>利潤率 %
           <input type="number" value={commission.profitRate} onChange={(event) => updateCommission("profitRate", numberValue(event.target.value))} />
@@ -366,7 +553,7 @@ function CommissionPanel({ commission, simulationSettings, updateCommission, upd
           <input type="number" value={commission.riskBufferRate} onChange={(event) => updateCommission("riskBufferRate", numberValue(event.target.value))} />
         </label>
         <label>最低工資
-          <input value={commission.minimumFee} onChange={(event) => updateCommission("minimumFee", numberValue(event.target.value))} />
+          <input inputMode="numeric" value={commission.minimumFee} onChange={(event) => updateCommission("minimumFee", numberValue(event.target.value))} />
         </label>
         <label>報價基準
           <select value={commission.quoteBasis} onChange={(event) => updateCommission("quoteBasis", event.target.value)}>
@@ -390,159 +577,227 @@ function CommissionPanel({ commission, simulationSettings, updateCommission, upd
   );
 }
 
-function OverviewPanel({ route, simulation }) {
+function ModeInsight({ mode, quote, quoteBasis, route, simulation, simulationStatus }) {
+  const basisValue =
+    quoteBasis === "p95"
+      ? simulationMetric(simulation, simulationStatus, "p95")
+      : quoteBasis === "p90"
+        ? simulationMetric(simulation, simulationStatus, "p90")
+        : quote.ok
+          ? formatZeny(quote.base)
+          : "無法計算";
+
   return (
-    <section className="card hero-card">
-      <div className="card-head">
-        <div>
-          <p className="eyebrow">Overview</p>
-          <h2>理論期望與模擬分布</h2>
-        </div>
-        <span className="pill">{simulation ? `${formatNumber(simulation.runs)} runs` : "尚未模擬"}</span>
+    <section className="card mode-panel">
+      <div className="mode-copy">
+        <p className="eyebrow">{mode === "commission" ? "Commission View" : "Owner View"}</p>
+        <h2>{mode === "commission" ? "代衝報價視角" : "自用成本視角"}</h2>
+        <strong>{mode === "commission" ? (quote.ok ? formatZeny(quote.suggested) : "無法計算") : (route.ok ? formatZeny(route.expectedCost) : "無法計算")}</strong>
       </div>
-      <div className="metrics">
-        <Metric label="理論期望成本" value={route.ok ? formatZeny(route.expectedCost) : "無法計算"} />
-        <Metric label="模擬平均成本" value={simulation ? formatZeny(simulation.average) : "等待模擬"} tone="good" />
-        <Metric label="P95 成本" value={simulation ? formatZeny(simulation.p95) : "等待模擬"} tone="warn" />
-        <Metric label="最慘成本" value={simulation ? formatZeny(simulation.worst) : "等待模擬"} tone="bad" />
+      <div className="mode-facts">
+        <InfoTile label="報價基準" value={basisValue} />
+        <InfoTile label="保守報價" value={quote.ok ? formatZeny(quote.conservative) : "無法計算"} />
+        <InfoTile label="單輪爆裝風險" value={route.ok ? formatPercent(route.risk.singlePassBreakRisk) : "-"} />
       </div>
-      {!route.ok && <div className="notice">{route.error}</div>}
     </section>
   );
 }
 
-function QuotePanel({ quote, simulation, route, quoteBasis }) {
-  const basis = quoteBasis === "p95" ? simulation?.p95 : quoteBasis === "p90" ? simulation?.p90 : quote?.base;
-  const riskQuote = Number.isFinite(basis) ? basis : quote?.conservative;
+function InfoTile({ label, value }) {
   return (
-    <section className="card quote-card">
-      <div className="card-head">
-        <div>
-          <p className="eyebrow">Commission</p>
-          <h2>代衝報價</h2>
-        </div>
+    <div className="info-tile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function MonteCarloPanel({ route, simulation, simulationStatus, settings, updateSimulationSetting, runSimulation, isSimulating }) {
+  return (
+    <section className="card panel sim-panel">
+      <PanelHeader
+        eyebrow="Monte Carlo"
+        title="蒙地卡羅模擬"
+        meta={simulationStatus === "fresh" ? "已同步" : simulationStatus === "stale" ? "需重新模擬" : "尚未模擬"}
+      />
+      <div className="sim-toolbar">
+        <label>模擬次數
+          <select value={settings.runs} onChange={(event) => updateSimulationSetting("runs", numberValue(event.target.value))}>
+            <option value="1000">1,000</option>
+            <option value="10000">10,000</option>
+            <option value="100000">100,000</option>
+          </select>
+        </label>
+        <label>隨機種子
+          <input value={settings.seed} onChange={(event) => updateSimulationSetting("seed", event.target.value)} />
+        </label>
+        <button className="btn" type="button" disabled={!route.ok || isSimulating} onClick={runSimulation}>
+          {isSimulating ? "模擬中..." : "執行模擬"}
+        </button>
       </div>
-      {quote.ok ? (
+
+      {simulation ? (
         <>
-          <div className="quote-list">
-            <QuoteRow label="低標" value={formatZeny(quote.low)} />
-            <QuoteRow label="建議收費" value={formatZeny(quote.suggested)} tone="good" />
-            <QuoteRow label={`${quoteBasis.toUpperCase()} 風險報價`} value={formatZeny(riskQuote)} tone="warn" />
+          <div className="stat-grid">
+            <Metric label="平均" value={formatZeny(simulation.average)} tone="blue" />
+            <Metric label="中位數" value={formatZeny(simulation.median)} />
+            <Metric label="P90" value={formatZeny(simulation.p90)} tone="warn" />
+            <Metric label="P95" value={formatZeny(simulation.p95)} tone="warn" />
+            <Metric label="最佳" value={formatZeny(simulation.best)} tone="good" />
+            <Metric label="最差" value={formatZeny(simulation.worst)} tone="bad" />
+            <Metric label="平均嘗試" value={`${formatNumber(simulation.averageAttempts, 1)} 次`} />
+            <Metric label="平均爆裝" value={`${formatNumber(simulation.averageBreaks, 2)} 次`} tone={simulation.averageBreaks > 0 ? "bad" : "good"} />
+            <Metric label="P95 爆裝" value={`${formatNumber(simulation.p95Breaks)} 次`} tone={simulation.p95Breaks > 0 ? "bad" : "good"} />
           </div>
-          {route?.risk?.hasBreakRisk && <div className="notice">此路線有爆裝風險；接代衝建議同時看 P90/P95，不要只看期望值。</div>}
+          <Histogram buckets={simulation.histogram} />
+          {simulation.truncated > 0 && <div className="notice warn">{simulation.truncated} 筆模擬達到安全上限。</div>}
         </>
       ) : (
-        <div className="notice">{quote.error}</div>
+        <div className={`empty-state ${simulationStatus === "stale" ? "stale" : ""}`}>
+          {simulationStatus === "stale" ? "輸入參數已變更，需重新模擬。" : "尚未執行蒙地卡羅模擬。"}
+        </div>
       )}
     </section>
   );
 }
 
-function MonteCarloPanel({ route, simulation, settings, updateSimulationSetting, runSimulation, isSimulating }) {
-  return (
-    <section className="card sim-panel">
-      <div className="card-head">
-        <div>
-          <p className="eyebrow">Monte Carlo</p>
-          <h2>蒙地卡羅模擬</h2>
-        </div>
-        <span className="pill">{simulation?.ok ? "已完成" : "可重跑"}</span>
-      </div>
-      <div className="dist-card">
-        <div className="sim-toolbar">
-          <label>模擬次數
-            <select value={settings.runs} onChange={(event) => updateSimulationSetting("runs", numberValue(event.target.value))}>
-              <option value="1000">1,000</option>
-              <option value="10000">10,000</option>
-              <option value="100000">100,000</option>
-            </select>
-          </label>
-          <label>隨機種子
-            <input value={settings.seed} onChange={(event) => updateSimulationSetting("seed", event.target.value)} />
-          </label>
-          <button className="btn" type="button" disabled={!route.ok || isSimulating} onClick={runSimulation}>
-            {isSimulating ? "模擬中..." : "執行模擬"}
-          </button>
-        </div>
-        {simulation?.ok ? (
-          <>
-            <div className="metrics">
-              <Metric label="平均" value={formatZeny(simulation.average)} />
-              <Metric label="中位數" value={formatZeny(simulation.median)} />
-              <Metric label="P90" value={formatZeny(simulation.p90)} tone="warn" />
-              <Metric label="P95" value={formatZeny(simulation.p95)} tone="warn" />
-            </div>
-            <Histogram buckets={simulation.histogram} />
-            <div className="sim-detail">
-              平均嘗試 {formatNumber(simulation.averageAttempts, 1)} 次，平均爆裝 {formatNumber(simulation.averageBreaks, 2)} 次，P95 爆裝 {formatNumber(simulation.p95Breaks)} 次。
-              {simulation.truncated > 0 && ` 有 ${simulation.truncated} 筆達到安全上限，請提高上限或檢查價格。`}
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">按下「執行模擬」後，這裡會顯示平均、中位數、P90、P95、最慘成本與分布圖。</div>
-        )}
-      </div>
-    </section>
-  );
-}
+function Histogram({ buckets = [] }) {
+  if (!buckets.length) return null;
 
-function Histogram({ buckets }) {
   return (
-    <>
-      <div className="chart">
-        <div className="axis"><span>多</span><span>次數</span><span>少</span></div>
-        <div className="histogram">
-          {buckets.map((bucket, index) => (
-            <div
-              key={`${bucket.min}-${index}`}
-              className={`bar ${index > buckets.length * 0.9 ? "p95" : index > buckets.length * 0.75 ? "p90" : ""}`}
-              style={{ height: `${Math.max(4, bucket.ratio * 100)}%` }}
-              title={`${formatZeny(bucket.min)} - ${formatZeny(bucket.max)}：${bucket.count}`}
-            />
-          ))}
-        </div>
+    <div className="chart-block">
+      <div className="chart-head">
+        <span>成本分布</span>
+        <small>{formatZeny(buckets[0].min)} - {formatZeny(buckets[buckets.length - 1].max)}</small>
+      </div>
+      <div className="histogram" aria-label="蒙地卡羅成本分布圖">
+        {buckets.map((bucket, index) => (
+          <div
+            key={`${bucket.min}-${bucket.max}-${index}`}
+            className={`bar ${index > buckets.length * 0.9 ? "p95" : index > buckets.length * 0.75 ? "p90" : ""}`}
+            style={{ height: `${Math.max(5, bucket.ratio * 100)}%` }}
+            title={`${formatZeny(bucket.min)} - ${formatZeny(bucket.max)}: ${bucket.count}`}
+          />
+        ))}
       </div>
       <div className="legend">
         <span><i className="dot" />主要分布</span>
         <span><i className="dot gold" />高成本尾端</span>
-        <span><i className="dot red" />極端成本尾端</span>
+        <span><i className="dot red" />極端尾端</span>
       </div>
-    </>
+    </div>
   );
 }
 
 function RoutePanel({ route }) {
+  const warnings = route.ok ? routeWarnings(route) : [];
+
   return (
-    <section className="card route-panel">
-      <div className="card-head">
-        <div>
-          <p className="eyebrow">Route</p>
-          <h2>推薦成功路徑</h2>
+    <section className="card panel route-panel">
+      <PanelHeader eyebrow="Route" title="推薦成功路線" meta={route.ok ? `${route.steps.length} 步` : "無路線"} />
+      {!route.ok && <div className="notice warn">{route.error}</div>}
+      {warnings.map((warning) => <div className="notice warn" key={warning}>{warning}</div>)}
+      {route.ok && route.steps.length === 0 && <div className="empty-state">目前狀態已達成目標。</div>}
+      {route.ok && route.steps.length > 0 && (
+        <div className="timeline">
+          {route.steps.map((step) => {
+            const risk = getStepRiskLevel(step);
+            return (
+              <article className={`timeline-step risk-${risk.level}`} key={`${step.index}-${step.label}`}>
+                <div className="timeline-index">{step.index}</div>
+                <div className="timeline-body">
+                  <div className="step-title">
+                    <h3>{step.label}</h3>
+                    <span className={`risk-badge ${risk.level}`}>{risk.label}</span>
+                  </div>
+                  <div className="step-stats">
+                    <InfoTile label="成功率" value={formatPercent(step.rate)} />
+                    <InfoTile label="單次成本" value={formatZeny(step.cost)} />
+                    <InfoTile label="剩餘期望" value={formatZeny(step.remainingExpectedCost)} />
+                  </div>
+                  <p className="step-fail">{step.failText}</p>
+                  <p className="step-materials">
+                    {(step.materials?.length ? step.materials.join("、") : "無材料")} / 手續費 {formatZeny(step.zenyFee)}
+                  </p>
+                </div>
+              </article>
+            );
+          })}
         </div>
-        <span className="pill">{route.ok ? `${route.steps.length} 步` : "無路線"}</span>
-      </div>
-      {route.ok ? (
-        <div className="route-list">
-          {route.steps.map((step) => (
-            <article className="route-step" key={`${step.index}-${step.label}`}>
-              <div className="step-no">{step.index}</div>
-              <div>
-                <h3>{step.label}</h3>
-                <p>{formatPercent(step.rate)}，單次 {formatZeny(step.cost)}。{step.failText}</p>
-              </div>
-              <span className="tag">{step.type === "grade" ? "升階" : step.protected ? "保護" : step.materialKind === "advanced" ? "濃縮" : "一般"}</span>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="notice">{route.error}</div>
       )}
+    </section>
+  );
+}
+
+function routeWarnings(route) {
+  const warnings = [];
+  if (route.risk.hasBreakRisk && route.replacementCost <= 0) {
+    warnings.push("裝備基礎價格目前是 0；有爆裝風險的路線會低估重新取得裝備成本。");
+  }
+  if (gradeIndex(route.target.grade) > gradeIndex(route.start.grade) && !Number.isFinite(route.materialCosts.blessedEtherStardust?.best)) {
+    warnings.push("庇佑乙太星塵未填價格；升階加成不會納入比較。");
+  }
+  return warnings;
+}
+
+function CostSummary({ mode, quote, route }) {
+  if (!route.ok || !quote.ok) return <section className="card panel"><PanelHeader eyebrow="Cost" title="成本摘要" /><div className="notice warn">{route.error || quote.error}</div></section>;
+
+  const rows = mode === "commission"
+    ? [
+      { label: "理論期望基礎", value: quote.base, tone: "blue" },
+      { label: "利潤", value: quote.profit, tone: "green" },
+      { label: "風險緩衝", value: quote.riskBuffer, tone: "gold" },
+      { label: "最低工資", value: quote.minimumFee, tone: "gold" },
+      { label: "建議報價", value: quote.suggested, tone: "strong" },
+    ]
+    : [
+      { label: "裝備本體", value: route.initialEquipmentCost, tone: "muted" },
+      { label: "養成路線期望", value: route.routeExpectedCost, tone: "blue" },
+      { label: "總期望成本", value: route.expectedCost, tone: "strong" },
+      { label: "保守報價參考", value: quote.conservative, tone: "gold" },
+    ];
+  const max = Math.max(1, ...rows.map((row) => row.value));
+
+  return (
+    <section className="card panel summary-panel">
+      <PanelHeader eyebrow="Cost" title={mode === "commission" ? "報價組成" : "成本摘要"} meta="可追溯欄位" />
+      <div className="summary-list">
+        {rows.map((row) => (
+          <div className={`summary-row ${row.tone}`} key={row.label}>
+            <div>
+              <span>{row.label}</span>
+              <strong>{formatZeny(row.value)}</strong>
+            </div>
+            <div className="summary-track">
+              <i style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AnalysisTabs({ activeTab, materialCosts, route, setActiveTab, simulation, simulationStatus }) {
+  return (
+    <section className="card panel table-card">
+      <div className="tabs">
+        <button className={`tab ${activeTab === "refine" ? "active" : ""}`} type="button" onClick={() => setActiveTab("refine")}>精煉比較</button>
+        <button className={`tab ${activeTab === "materials" ? "active" : ""}`} type="button" onClick={() => setActiveTab("materials")}>材料成本</button>
+        <button className={`tab ${activeTab === "samples" ? "active" : ""}`} type="button" onClick={() => setActiveTab("samples")}>模擬摘要</button>
+      </div>
+      {activeTab === "refine" && <RefineComparisonTable route={route} />}
+      {activeTab === "materials" && <MaterialTable materialCosts={materialCosts} />}
+      {activeTab === "samples" && <SimulationSummary simulation={simulation} simulationStatus={simulationStatus} />}
     </section>
   );
 }
 
 function RefineComparisonTable({ route }) {
-  if (!route.ok) return <div className="notice">{route.error}</div>;
+  if (!route.ok) return <div className="notice warn">{route.error}</div>;
+  if (!route.refineComparisons.length) return <div className="empty-state">此路線沒有可比較的精煉選項。</div>;
+
   return (
     <div className="table-wrap">
       <table>
@@ -552,6 +807,7 @@ function RefineComparisonTable({ route }) {
             <th>選項</th>
             <th className="number">成功率</th>
             <th className="number">單次成本</th>
+            <th>失敗結果</th>
             <th className="number">剩餘期望</th>
             <th>判斷</th>
           </tr>
@@ -559,10 +815,11 @@ function RefineComparisonTable({ route }) {
         <tbody>
           {route.refineComparisons.map((row, index) => (
             <tr key={`${row.state}-${row.option}-${index}`} className={row.chosen ? "chosen" : ""}>
-              <td>{row.state} → {row.to}</td>
+              <td>{row.state} {"->"} {row.to}</td>
               <td>{row.option}</td>
               <td className="number">{formatPercent(row.rate)}</td>
               <td className="number">{formatZeny(row.cost)}</td>
+              <td>{row.failText}</td>
               <td className="number">{formatZeny(row.expected)}</td>
               <td>{row.chosen ? <strong>採用</strong> : "比較"}</td>
             </tr>
@@ -597,7 +854,7 @@ function MaterialTable({ materialCosts }) {
                 <td>{cost.recipeLabel || "無配方"}</td>
                 <td className="number">{formatZeny(cost.direct)}</td>
                 <td className="number">{formatZeny(cost.crafted)}</td>
-                <td>{cost.method}</td>
+                <td><span className="method-pill">{cost.method}</span></td>
                 <td className="number"><strong>{formatZeny(cost.best)}</strong></td>
               </tr>
             );
@@ -610,30 +867,38 @@ function MaterialTable({ materialCosts }) {
 
 function PriceEditor({ prices, updatePrice }) {
   return (
-    <div className="price-sections">
+    <div className="price-accordion">
       {PRICE_SECTIONS.map((section) => (
-        <section className="price-section" key={section.title}>
-          <h3>{section.title}</h3>
+        <details className="price-group" key={section.id} defaultOpen={section.defaultOpen}>
+          <summary>
+            <span>{section.title}</span>
+            <em>{section.badge}</em>
+          </summary>
           <div className="price-grid">
             {section.keys.map((key) => (
               <label key={key}>{MATERIALS[key] || key}
-                <input value={prices[key] || ""} onChange={(event) => updatePrice(key, event.target.value)} placeholder="0" />
+                <input inputMode="numeric" value={prices[key] || ""} onChange={(event) => updatePrice(key, event.target.value)} placeholder="0" />
               </label>
             ))}
           </div>
-        </section>
+        </details>
       ))}
     </div>
   );
 }
 
-function SimulationSummary({ simulation }) {
-  if (!simulation?.ok) return <div className="empty-state">尚未執行蒙地卡羅模擬。</div>;
+function SimulationSummary({ simulation, simulationStatus }) {
+  if (!simulation) {
+    return <div className={`empty-state ${simulationStatus === "stale" ? "stale" : ""}`}>{simulationStatus === "stale" ? "輸入參數已變更，需重新模擬。" : "尚未執行蒙地卡羅模擬。"}</div>;
+  }
+
   return (
-    <div className="metrics table-metrics">
-      <Metric label="最佳樣本" value={formatZeny(simulation.best)} />
-      <Metric label="平均成本" value={formatZeny(simulation.average)} />
+    <div className="stat-grid compact">
+      <Metric label="最佳樣本" value={formatZeny(simulation.best)} tone="good" />
+      <Metric label="平均成本" value={formatZeny(simulation.average)} tone="blue" />
       <Metric label="中位數" value={formatZeny(simulation.median)} />
+      <Metric label="P90" value={formatZeny(simulation.p90)} tone="warn" />
+      <Metric label="P95" value={formatZeny(simulation.p95)} tone="warn" />
       <Metric label="最慘成本" value={formatZeny(simulation.worst)} tone="bad" />
       <Metric label="平均嘗試" value={`${formatNumber(simulation.averageAttempts, 1)} 次`} />
       <Metric label="平均爆裝" value={`${formatNumber(simulation.averageBreaks, 2)} 次`} />
@@ -646,15 +911,6 @@ function Metric({ label, value, tone = "" }) {
     <div className={`metric ${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function QuoteRow({ label, value, tone = "" }) {
-  return (
-    <div className="quote-row">
-      <span>{label}</span>
-      <strong className={tone}>{value}</strong>
     </div>
   );
 }
