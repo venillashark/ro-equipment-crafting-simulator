@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "RO GNJOY Material Price Exporter",
+  "version": "0.1.0",
+  "description": "在 GNJOY RO 露天商店查詢頁批次查詢材料價格，並匯出模擬器可匯入的 JSON。",
+  "host_permissions": [
+    "https://event.gnjoy.com.tw/Ro/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://event.gnjoy.com.tw/Ro/RoShopSearch*"
+      ],
+      "js": [
+        "materials.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

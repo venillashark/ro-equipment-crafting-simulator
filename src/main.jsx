@@ -45,8 +45,10 @@ const PRICE_SECTIONS = [
     keys: [
       "oridecon",
       "etherOridecon",
+      "concentratedOrideconBox",
       "concentratedEtherOridecon",
       "etherBradium",
+      "highConcentratedOrideconBox",
       "highConcentratedEtherOridecon",
       "highDensityEtherBradium",
     ],
@@ -59,8 +61,10 @@ const PRICE_SECTIONS = [
     keys: [
       "elunium",
       "etherElunium",
+      "concentratedEluniumBox",
       "concentratedEtherElunium",
       "etherCarnium",
+      "highConcentratedEluniumBox",
       "highConcentratedEtherElunium",
       "highDensityEtherCarnium",
     ],
@@ -1140,7 +1144,23 @@ function RefineComparisonTable({ route }) {
 }
 
 function MaterialTable({ materialCosts }) {
-  const rows = ["etherOridecon", "etherElunium", "etherStone", "azureGem", "yellowGem", "purpleGem", "amberGem"];
+  const rows = [
+    "etherOridecon",
+    "etherElunium",
+    "concentratedOridecon",
+    "concentratedElunium",
+    "highConcentratedOridecon",
+    "highConcentratedElunium",
+    "concentratedEtherOridecon",
+    "concentratedEtherElunium",
+    "highConcentratedEtherOridecon",
+    "highConcentratedEtherElunium",
+    "etherStone",
+    "azureGem",
+    "yellowGem",
+    "purpleGem",
+    "amberGem",
+  ];
   return (
     <div className="table-wrap">
       <table>

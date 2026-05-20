@@ -36,6 +36,31 @@ test("神之金屬與鋁會自動換算乙太精煉材料成本", () => {
   assert.equal(costs.etherElunium.method, "自行製作");
 });
 
+test("濃縮箱子會換算單個價格並自動製作濃縮乙太材料", () => {
+  const costs = resolveMaterialCost({
+    ...DEFAULT_CONFIG.materials,
+    etherStardust: 1000,
+    concentratedOrideconBox: 100000,
+    highConcentratedOrideconBox: 250000,
+    concentratedEluniumBox: 80000,
+    highConcentratedEluniumBox: 200000,
+    concentratedEtherOridecon: 0,
+    highConcentratedEtherOridecon: 0,
+    concentratedEtherElunium: 0,
+    highConcentratedEtherElunium: 0,
+  });
+
+  assert.equal(costs.concentratedOridecon.best, 10000);
+  assert.equal(costs.highConcentratedOridecon.best, 50000);
+  assert.equal(costs.concentratedElunium.best, 8000);
+  assert.equal(costs.highConcentratedElunium.best, 40000);
+  assert.equal(costs.concentratedEtherOridecon.best, 32000);
+  assert.equal(costs.highConcentratedEtherOridecon.best, 103000);
+  assert.equal(costs.concentratedEtherElunium.best, 30000);
+  assert.equal(costs.highConcentratedEtherElunium.best, 93000);
+  assert.equal(costs.concentratedEtherOridecon.method, "自行製作");
+});
+
 test("+10 前五級武器濃縮精煉失敗退 1，一般精煉退 3", () => {
   const state = { grade: "none", refine: 7 };
 
