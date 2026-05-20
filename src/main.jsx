@@ -143,6 +143,14 @@ function formatZeny(value) {
   return `${Math.round(value).toLocaleString("zh-TW")} Z`;
 }
 
+function formatCompactZeny(value) {
+  if (!Number.isFinite(value)) return "無法計算";
+  const abs = Math.abs(value);
+  if (abs >= 100000000) return `${formatNumber(value / 100000000, 1)} 億 Z`;
+  if (abs >= 10000) return `${formatNumber(value / 10000, abs >= 1000000 ? 0 : 1)} 萬 Z`;
+  return formatZeny(value);
+}
+
 function formatNumber(value, digits = 0) {
   if (!Number.isFinite(value)) return "-";
   return value.toLocaleString("zh-TW", { maximumFractionDigits: digits });
@@ -396,18 +404,30 @@ function App() {
         </div>
 
         <div className="nav-tools">
-          <ModeSwitch mode={state.mode} updateMode={updateMode} />
-          <ThemeSwitch theme={state.theme} updateTheme={updateTheme} />
-          <ExchangeRateControl
-            exchangeRate={state.exchangeRateZenyPerTwd}
-            updateExchangeRate={updateExchangeRate}
-          />
-          <div className="actions">
-            <button className="btn secondary" type="button" onClick={openMaterialsDialog}>材料價格</button>
-            <button className="btn secondary" type="button" onClick={resetDefaults}>還原預設</button>
-            <button className="btn" type="button" disabled={!route.ok || isSimulating} onClick={runSimulation}>
-              {isSimulating ? "模擬中..." : "執行模擬"}
-            </button>
+          <div className="top-group mode-group">
+            <span className="top-label">模式</span>
+            <ModeSwitch mode={state.mode} updateMode={updateMode} />
+          </div>
+          <div className="top-group theme-group">
+            <span className="top-label">外觀</span>
+            <ThemeSwitch theme={state.theme} updateTheme={updateTheme} />
+          </div>
+          <div className="top-group exchange-group">
+            <span className="top-label">匯率</span>
+            <ExchangeRateControl
+              exchangeRate={state.exchangeRateZenyPerTwd}
+              updateExchangeRate={updateExchangeRate}
+            />
+          </div>
+          <div className="top-group tools-group">
+            <span className="top-label">工具</span>
+            <div className="actions top-actions">
+              <button className="btn secondary" type="button" onClick={openMaterialsDialog}>材料價格</button>
+              <button className="btn secondary" type="button" onClick={resetDefaults}>還原預設</button>
+              <button className="btn" type="button" disabled={!route.ok || isSimulating} onClick={runSimulation}>
+                {isSimulating ? "模擬中..." : "執行模擬"}
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -543,16 +563,20 @@ function ExchangeRateControl({ exchangeRate, updateExchangeRate }) {
   const validRate = validExchangeRate(exchangeRate);
 
   return (
-    <label className="exchange-control">
-      1 台幣可換 Zeny
-      <input
-        inputMode="numeric"
-        placeholder="例如 100000"
-        value={exchangeRate}
-        onChange={(event) => updateExchangeRate(event.target.value)}
-      />
-      {validRate && <small>依自訂匯率估算：1 台幣 = {formatNumber(validRate)} Zeny</small>}
-    </label>
+    <div className="exchange-control" role="group" aria-label="台幣匯率設定">
+      <div className="exchange-row">
+        <span>1 台幣 =</span>
+        <input
+          inputMode="numeric"
+          aria-label="1 台幣可換 Zeny"
+          placeholder="160000"
+          value={exchangeRate}
+          onChange={(event) => updateExchangeRate(event.target.value)}
+        />
+        <span>Zeny</span>
+      </div>
+      <small>{validRate ? `依自訂匯率估算` : "未設定時不顯示 NT$"}</small>
+    </div>
   );
 }
 
@@ -788,11 +812,11 @@ function ModeInsight({ mode, quote, quoteBasis, route, simulation, simulationSta
   );
 }
 
-function InfoTile({ label, value }) {
+function InfoTile({ label, value, title }) {
   return (
     <div className="info-tile">
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong title={title}>{value}</strong>
     </div>
   );
 }
@@ -906,8 +930,12 @@ function RoutePanel({ route, openRefineCompare }) {
                   </div>
                   <div className="step-stats">
                     <InfoTile label="成功率" value={formatPercent(step.rate)} />
-                    <InfoTile label="單次成本" value={formatZeny(step.cost)} />
-                    <InfoTile label="剩餘期望" value={formatZeny(step.remainingExpectedCost)} />
+                    <InfoTile label="單次成本" value={formatCompactZeny(step.cost)} title={`完整單次成本：${formatZeny(step.cost)}`} />
+                  </div>
+                  <div className="step-meta-row">
+                    <span title={`完整剩餘期望：${formatZeny(step.remainingExpectedCost)}`}>
+                      剩餘期望 <strong>{formatCompactZeny(step.remainingExpectedCost)}</strong>
+                    </span>
                   </div>
                   <p className="step-fail">{step.failText}</p>
                   <p className="step-materials">
