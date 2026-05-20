@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { downloadPriceJson, validatePriceImport } from "./helpers/materialPriceIO.js";
 import "./core.js";
 import "./styles.css";
 
@@ -106,6 +107,8 @@ function loadInitialState() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     return {
       mode: saved.mode === "commission" ? "commission" : "self",
+      theme: saved.theme === "light" ? "light" : "dark",
+      exchangeRateZenyPerTwd: saved.exchangeRateZenyPerTwd || "",
       prices: { ...demoPrices, ...(saved.prices || saved.materials || {}) },
       target: { ...defaultTarget, ...(saved.target || {}) },
       commission: { ...defaultCommission, ...(saved.commission || saved.commissionSettings || {}) },
@@ -117,6 +120,8 @@ function loadInitialState() {
   } catch (_error) {
     return {
       mode: "self",
+      theme: "dark",
+      exchangeRateZenyPerTwd: "",
       prices: demoPrices,
       target: defaultTarget,
       commission: defaultCommission,
@@ -166,7 +171,6 @@ function stableStringify(value) {
 
 function createSimulationSignature(state) {
   return stableStringify({
-    commission: state.commission,
     prices: state.prices,
     simulationSettings: state.simulationSettings,
     target: state.target,
@@ -188,9 +192,32 @@ function simulationMetric(simulation, status, key, formatter = formatZeny) {
   return formatter(simulation[key]);
 }
 
+function validExchangeRate(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatTwdFromZeny(value, exchangeRate) {
+  if (!Number.isFinite(value) || !exchangeRate) return "";
+  const twd = value / exchangeRate;
+  return `約 NT$${twd.toLocaleString("zh-TW", {
+    maximumFractionDigits: twd >= 100 ? 0 : 1,
+  })}`;
+}
+
+function zenyWithTwd(value, exchangeRate) {
+  return {
+    zeny: formatZeny(value),
+    twd: formatTwdFromZeny(value, exchangeRate),
+  };
+}
+
 function App() {
   const [state, setState] = useState(loadInitialState);
-  const [activeTab, setActiveTab] = useState("refine");
+  const [activeDialog, setActiveDialog] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importError, setImportError] = useState("");
+  const [importSuccess, setImportSuccess] = useState("");
   const [simulation, setSimulation] = useState(null);
   const [isSimulating, setIsSimulating] = useState(false);
 
@@ -205,6 +232,25 @@ function App() {
   const simulationIsFresh = simulation?.ok && simulation.signature === simulationSignature;
   const simulationStatus = simulation?.ok ? (simulationIsFresh ? "fresh" : "stale") : "empty";
   const displaySimulation = simulationIsFresh ? simulation : null;
+  const exchangeRate = validExchangeRate(state.exchangeRateZenyPerTwd);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = state.theme;
+    document.documentElement.style.colorScheme = state.theme;
+  }, [state.theme]);
+
+  useEffect(() => {
+    if (!activeDialog) return undefined;
+    function closeOnEscape(event) {
+      if (event.key === "Escape") setActiveDialog(null);
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    document.body.classList.add("modal-open");
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      document.body.classList.remove("modal-open");
+    };
+  }, [activeDialog]);
 
   function updateState(next) {
     setState((current) => {
@@ -216,6 +262,17 @@ function App() {
 
   function updateMode(mode) {
     updateState((current) => ({ ...current, mode }));
+  }
+
+  function updateTheme(theme) {
+    updateState((current) => ({ ...current, theme }));
+  }
+
+  function updateExchangeRate(value) {
+    updateState((current) => ({
+      ...current,
+      exchangeRateZenyPerTwd: value,
+    }));
   }
 
   function updateTarget(key, value) {
@@ -249,6 +306,8 @@ function App() {
   function resetDefaults() {
     const next = {
       mode: "self",
+      theme: "dark",
+      exchangeRateZenyPerTwd: "",
       prices: demoPrices,
       target: defaultTarget,
       commission: defaultCommission,
@@ -257,6 +316,9 @@ function App() {
     saveState(next);
     setState(next);
     setSimulation(null);
+    setImportPreview(null);
+    setImportError("");
+    setImportSuccess("");
   }
 
   function runSimulation() {
@@ -269,12 +331,56 @@ function App() {
     }, 20);
   }
 
-  function scrollToPrices() {
-    document.getElementById("price-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  function openMaterialsDialog() {
+    setImportPreview(null);
+    setImportError("");
+    setImportSuccess("");
+    setActiveDialog("materials");
+  }
+
+  function closeDialog() {
+    setActiveDialog(null);
+  }
+
+  function exportPrices() {
+    downloadPriceJson(state.prices);
+  }
+
+  async function importPrices(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    setImportPreview(null);
+    setImportError("");
+    setImportSuccess("");
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const preview = validatePriceImport(text, Object.keys(MATERIALS));
+      if (!preview.ok) {
+        setImportError(preview.error);
+        return;
+      }
+      setImportPreview(preview);
+    } catch (_error) {
+      setImportError("讀取檔案失敗，請重新選擇 JSON 檔。");
+    }
+  }
+
+  function confirmPriceImport() {
+    if (!importPreview?.ok) return;
+    const count = importPreview.validCount;
+    updateState((current) => ({
+      ...current,
+      prices: { ...current.prices, ...importPreview.updates },
+    }));
+    setImportPreview(null);
+    setImportError("");
+    setImportSuccess(`匯入完成，已更新 ${count} 個材料價格。`);
   }
 
   return (
-    <div className={`shell mode-${state.mode}`}>
+    <div className={`shell mode-${state.mode} theme-${state.theme}`}>
       <header className="app-nav">
         <div className="brand">
           <div className="mark">RO</div>
@@ -287,8 +393,13 @@ function App() {
 
         <div className="nav-tools">
           <ModeSwitch mode={state.mode} updateMode={updateMode} />
+          <ThemeSwitch theme={state.theme} updateTheme={updateTheme} />
+          <ExchangeRateControl
+            exchangeRate={state.exchangeRateZenyPerTwd}
+            updateExchangeRate={updateExchangeRate}
+          />
           <div className="actions">
-            <button className="btn secondary" type="button" onClick={scrollToPrices}>材料價格</button>
+            <button className="btn secondary" type="button" onClick={openMaterialsDialog}>材料價格</button>
             <button className="btn secondary" type="button" onClick={resetDefaults}>還原預設</button>
             <button className="btn" type="button" disabled={!route.ok || isSimulating} onClick={runSimulation}>
               {isSimulating ? "模擬中..." : "執行模擬"}
@@ -303,22 +414,21 @@ function App() {
         route={route}
         simulation={displaySimulation}
         simulationStatus={simulationStatus}
+        exchangeRate={exchangeRate}
       />
 
       <main className="dashboard">
         <aside className="sidebar">
           <TargetPanel target={state.target} updateTarget={updateTarget} />
           <StrategyPanel target={state.target} updateTarget={updateTarget} />
-          <CommissionPanel
-            commission={state.commission}
-            simulationSettings={state.simulationSettings}
-            updateCommission={updateCommission}
-            updateSimulationSetting={updateSimulationSetting}
-          />
-          <section id="price-panel" className="card panel price-card">
-            <PanelHeader eyebrow="Market" title="材料價格" meta="自動保存" />
-            <PriceEditor prices={state.prices} updatePrice={updatePrice} />
-          </section>
+          {state.mode === "commission" && (
+            <CommissionPanel
+              commission={state.commission}
+              simulationSettings={state.simulationSettings}
+              updateCommission={updateCommission}
+              updateSimulationSetting={updateSimulationSetting}
+            />
+          )}
         </aside>
 
         <section className="main">
@@ -329,6 +439,7 @@ function App() {
             route={route}
             simulation={displaySimulation}
             simulationStatus={simulationStatus}
+            exchangeRate={exchangeRate}
           />
 
           <section className="analysis-grid">
@@ -340,23 +451,40 @@ function App() {
               updateSimulationSetting={updateSimulationSetting}
               runSimulation={runSimulation}
               isSimulating={isSimulating}
+              exchangeRate={exchangeRate}
             />
-            <RoutePanel route={route} />
+            <RoutePanel route={route} openRefineCompare={() => setActiveDialog("refineCompare")} />
           </section>
 
           <section className="analysis-grid lower">
-            <CostSummary mode={state.mode} quote={quote} route={route} />
-            <AnalysisTabs
-              activeTab={activeTab}
-              materialCosts={materialCosts}
-              route={route}
-              setActiveTab={setActiveTab}
-              simulation={displaySimulation}
-              simulationStatus={simulationStatus}
-            />
+            <CostSummary mode={state.mode} quote={quote} route={route} exchangeRate={exchangeRate} />
           </section>
         </section>
       </main>
+
+      {activeDialog === "materials" && (
+        <MaterialPriceDialog
+          importError={importError}
+          importPreview={importPreview}
+          importPrices={importPrices}
+          importSuccess={importSuccess}
+          materialCosts={materialCosts}
+          onClose={closeDialog}
+          onConfirmImport={confirmPriceImport}
+          onExport={exportPrices}
+          onResetImport={() => {
+            setImportPreview(null);
+            setImportError("");
+            setImportSuccess("");
+          }}
+          prices={state.prices}
+          updatePrice={updatePrice}
+        />
+      )}
+
+      {activeDialog === "refineCompare" && (
+        <RefineCompareDialog onClose={closeDialog} route={route} />
+      )}
     </div>
   );
 }
@@ -384,6 +512,46 @@ function ModeSwitch({ mode, updateMode }) {
   );
 }
 
+function ThemeSwitch({ theme, updateTheme }) {
+  return (
+    <div className="theme-switch" aria-label="主題切換">
+      <button
+        className={theme === "dark" ? "active" : ""}
+        type="button"
+        aria-pressed={theme === "dark"}
+        onClick={() => updateTheme("dark")}
+      >
+        深色主題
+      </button>
+      <button
+        className={theme === "light" ? "active" : ""}
+        type="button"
+        aria-pressed={theme === "light"}
+        onClick={() => updateTheme("light")}
+      >
+        明亮主題
+      </button>
+    </div>
+  );
+}
+
+function ExchangeRateControl({ exchangeRate, updateExchangeRate }) {
+  const validRate = validExchangeRate(exchangeRate);
+
+  return (
+    <label className="exchange-control">
+      1 台幣可換 Zeny
+      <input
+        inputMode="numeric"
+        placeholder="例如 100000"
+        value={exchangeRate}
+        onChange={(event) => updateExchangeRate(event.target.value)}
+      />
+      {validRate && <small>依自訂匯率估算：1 台幣 = {formatNumber(validRate)} Zeny</small>}
+    </label>
+  );
+}
+
 function PanelHeader({ eyebrow, title, meta }) {
   return (
     <div className="card-head">
@@ -396,7 +564,7 @@ function PanelHeader({ eyebrow, title, meta }) {
   );
 }
 
-function KpiStrip({ mode, quote, route, simulation, simulationStatus }) {
+function KpiStrip({ mode, quote, route, simulation, simulationStatus, exchangeRate }) {
   const riskValue = route.ok
     ? route.risk.hasBreakRisk
       ? formatPercent(route.risk.singlePassBreakRisk)
@@ -405,65 +573,73 @@ function KpiStrip({ mode, quote, route, simulation, simulationStatus }) {
   const riskSub = route.ok ? `期望爆裝 ${formatNumber(route.risk.expectedBreaks, 2)} 次` : route.error;
 
   return (
-    <section className="kpi-strip" aria-label="重要指標">
-      <KpiCard
-        id="expected"
-        featured={mode === "self"}
-        label="理論期望成本"
-        marker="EV"
-        value={route.ok ? formatZeny(route.expectedCost) : "無法計算"}
-        sub={route.ok ? `${route.steps.length} 個成功路徑階段` : route.error}
-      />
-      <KpiCard
-        id="sim-average"
-        featured={mode === "self"}
-        label="模擬平均成本"
-        marker="MC"
-        tone={simulationStatus === "stale" ? "stale" : "blue"}
-        value={simulationMetric(simulation, simulationStatus, "average")}
-        sub={simulation ? `${formatNumber(simulation.runs)} 次模擬` : "Monte Carlo"}
-      />
-      <KpiCard
-        id="p90"
-        featured={mode === "commission"}
-        label="P90"
-        marker="P90"
-        tone={simulationStatus === "stale" ? "stale" : "gold"}
-        value={simulationMetric(simulation, simulationStatus, "p90")}
-        sub="高成本分位"
-      />
-      <KpiCard
-        id="p95"
-        featured={mode === "commission"}
-        label="P95"
-        marker="P95"
-        tone={simulationStatus === "stale" ? "stale" : "gold"}
-        value={simulationMetric(simulation, simulationStatus, "p95")}
-        sub="保守成本分位"
-      />
-      <KpiCard
-        id="quote"
-        featured={mode === "commission"}
-        label="建議報價"
-        marker="Z"
-        tone="gold"
-        value={quote.ok ? formatZeny(quote.suggested) : "無法計算"}
-        sub={quote.ok ? `低標 ${formatZeny(quote.low)}` : quote.error}
-      />
-      <KpiCard
-        id="risk"
-        featured={mode === "self"}
-        label="爆裝風險"
-        marker="%"
-        tone={route.ok && route.risk.hasBreakRisk ? "red" : "green"}
-        value={riskValue}
-        sub={riskSub}
-      />
+    <section className="kpi-area" aria-label="重要指標">
+      <div className="kpi-strip">
+        <KpiCard
+          id="expected"
+          featured={mode === "self"}
+          label="理論期望成本"
+          marker="EV"
+          value={route.ok ? formatZeny(route.expectedCost) : "無法計算"}
+          convertedValue={route.ok ? formatTwdFromZeny(route.expectedCost, exchangeRate) : ""}
+          sub={route.ok ? `${route.steps.length} 個成功路徑階段` : route.error}
+        />
+        <KpiCard
+          id="sim-average"
+          featured={mode === "self"}
+          label="模擬平均成本"
+          marker="MC"
+          tone={simulationStatus === "stale" ? "stale" : "blue"}
+          value={simulationMetric(simulation, simulationStatus, "average")}
+          convertedValue={simulation ? formatTwdFromZeny(simulation.average, exchangeRate) : ""}
+          sub={simulation ? `${formatNumber(simulation.runs)} 次模擬` : "Monte Carlo"}
+        />
+        <KpiCard
+          id="p90"
+          featured={mode === "commission"}
+          label="P90"
+          marker="P90"
+          tone={simulationStatus === "stale" ? "stale" : "gold"}
+          value={simulationMetric(simulation, simulationStatus, "p90")}
+          convertedValue={simulation ? formatTwdFromZeny(simulation.p90, exchangeRate) : ""}
+          sub="高成本分位"
+        />
+        <KpiCard
+          id="p95"
+          featured={mode === "commission"}
+          label="P95"
+          marker="P95"
+          tone={simulationStatus === "stale" ? "stale" : "gold"}
+          value={simulationMetric(simulation, simulationStatus, "p95")}
+          convertedValue={simulation ? formatTwdFromZeny(simulation.p95, exchangeRate) : ""}
+          sub="保守成本分位"
+        />
+        <KpiCard
+          id="quote"
+          featured={mode === "commission"}
+          label="建議報價"
+          marker="Z"
+          tone="gold"
+          value={quote.ok ? formatZeny(quote.suggested) : "無法計算"}
+          convertedValue={quote.ok ? formatTwdFromZeny(quote.suggested, exchangeRate) : ""}
+          sub={quote.ok ? `低標 ${formatZeny(quote.low)}` : quote.error}
+        />
+        <KpiCard
+          id="risk"
+          featured={mode === "self"}
+          label="爆裝風險"
+          marker="%"
+          tone={route.ok && route.risk.hasBreakRisk ? "red" : "green"}
+          value={riskValue}
+          sub={riskSub}
+        />
+      </div>
+      {exchangeRate && <p className="exchange-hint">依自訂匯率估算：1 台幣 = {formatNumber(exchangeRate)} Zeny</p>}
     </section>
   );
 }
 
-function KpiCard({ featured = false, label, marker, sub, tone = "", value }) {
+function KpiCard({ convertedValue = "", featured = false, label, marker, sub, tone = "", value }) {
   return (
     <article className={`kpi-card ${tone} ${featured ? "featured" : ""}`}>
       <div className="kpi-top">
@@ -471,6 +647,7 @@ function KpiCard({ featured = false, label, marker, sub, tone = "", value }) {
         <i>{marker}</i>
       </div>
       <strong>{value}</strong>
+      {convertedValue && <em>{convertedValue}</em>}
       <small>{sub}</small>
     </article>
   );
@@ -577,7 +754,7 @@ function CommissionPanel({ commission, simulationSettings, updateCommission, upd
   );
 }
 
-function ModeInsight({ mode, quote, quoteBasis, route, simulation, simulationStatus }) {
+function ModeInsight({ mode, quote, quoteBasis, route, simulation, simulationStatus, exchangeRate }) {
   const basisValue =
     quoteBasis === "p95"
       ? simulationMetric(simulation, simulationStatus, "p95")
@@ -586,13 +763,17 @@ function ModeInsight({ mode, quote, quoteBasis, route, simulation, simulationSta
         : quote.ok
           ? formatZeny(quote.base)
           : "無法計算";
+  const primaryValue = mode === "commission" ? quote?.suggested : route?.expectedCost;
+  const primaryText = mode === "commission" ? (quote.ok ? formatZeny(quote.suggested) : "無法計算") : (route.ok ? formatZeny(route.expectedCost) : "無法計算");
+  const primaryTwd = formatTwdFromZeny(primaryValue, exchangeRate);
 
   return (
     <section className="card mode-panel">
       <div className="mode-copy">
         <p className="eyebrow">{mode === "commission" ? "Commission View" : "Owner View"}</p>
         <h2>{mode === "commission" ? "代衝報價視角" : "自用成本視角"}</h2>
-        <strong>{mode === "commission" ? (quote.ok ? formatZeny(quote.suggested) : "無法計算") : (route.ok ? formatZeny(route.expectedCost) : "無法計算")}</strong>
+        <strong>{primaryText}</strong>
+        {primaryTwd && <small>{primaryTwd}</small>}
       </div>
       <div className="mode-facts">
         <InfoTile label="報價基準" value={basisValue} />
@@ -612,7 +793,7 @@ function InfoTile({ label, value }) {
   );
 }
 
-function MonteCarloPanel({ route, simulation, simulationStatus, settings, updateSimulationSetting, runSimulation, isSimulating }) {
+function MonteCarloPanel({ route, simulation, simulationStatus, settings, updateSimulationSetting, runSimulation, isSimulating, exchangeRate }) {
   return (
     <section className="card panel sim-panel">
       <PanelHeader
@@ -639,12 +820,12 @@ function MonteCarloPanel({ route, simulation, simulationStatus, settings, update
       {simulation ? (
         <>
           <div className="stat-grid">
-            <Metric label="平均" value={formatZeny(simulation.average)} tone="blue" />
-            <Metric label="中位數" value={formatZeny(simulation.median)} />
-            <Metric label="P90" value={formatZeny(simulation.p90)} tone="warn" />
-            <Metric label="P95" value={formatZeny(simulation.p95)} tone="warn" />
-            <Metric label="最佳" value={formatZeny(simulation.best)} tone="good" />
-            <Metric label="最差" value={formatZeny(simulation.worst)} tone="bad" />
+            <Metric label="平均" value={formatZeny(simulation.average)} sub={formatTwdFromZeny(simulation.average, exchangeRate)} tone="blue" />
+            <Metric label="中位數" value={formatZeny(simulation.median)} sub={formatTwdFromZeny(simulation.median, exchangeRate)} />
+            <Metric label="P90" value={formatZeny(simulation.p90)} sub={formatTwdFromZeny(simulation.p90, exchangeRate)} tone="warn" />
+            <Metric label="P95" value={formatZeny(simulation.p95)} sub={formatTwdFromZeny(simulation.p95, exchangeRate)} tone="warn" />
+            <Metric label="最佳" value={formatZeny(simulation.best)} sub={formatTwdFromZeny(simulation.best, exchangeRate)} tone="good" />
+            <Metric label="最差" value={formatZeny(simulation.worst)} sub={formatTwdFromZeny(simulation.worst, exchangeRate)} tone="bad" />
             <Metric label="平均嘗試" value={`${formatNumber(simulation.averageAttempts, 1)} 次`} />
             <Metric label="平均爆裝" value={`${formatNumber(simulation.averageBreaks, 2)} 次`} tone={simulation.averageBreaks > 0 ? "bad" : "good"} />
             <Metric label="P95 爆裝" value={`${formatNumber(simulation.p95Breaks)} 次`} tone={simulation.p95Breaks > 0 ? "bad" : "good"} />
@@ -689,12 +870,21 @@ function Histogram({ buckets = [] }) {
   );
 }
 
-function RoutePanel({ route }) {
+function RoutePanel({ route, openRefineCompare }) {
   const warnings = route.ok ? routeWarnings(route) : [];
 
   return (
     <section className="card panel route-panel">
-      <PanelHeader eyebrow="Route" title="推薦成功路線" meta={route.ok ? `${route.steps.length} 步` : "無路線"} />
+      <div className="card-head">
+        <div>
+          <p className="eyebrow">Route</p>
+          <h2>推薦成功路線</h2>
+        </div>
+        <div className="card-actions">
+          <span className="pill">{route.ok ? `${route.steps.length} 步` : "無路線"}</span>
+          <button className="btn secondary small" type="button" onClick={openRefineCompare}>查看精煉比較</button>
+        </div>
+      </div>
       {!route.ok && <div className="notice warn">{route.error}</div>}
       {warnings.map((warning) => <div className="notice warn" key={warning}>{warning}</div>)}
       {route.ok && route.steps.length === 0 && <div className="empty-state">目前狀態已達成目標。</div>}
@@ -740,7 +930,7 @@ function routeWarnings(route) {
   return warnings;
 }
 
-function CostSummary({ mode, quote, route }) {
+function CostSummary({ mode, quote, route, exchangeRate }) {
   if (!route.ok || !quote.ok) return <section className="card panel"><PanelHeader eyebrow="Cost" title="成本摘要" /><div className="notice warn">{route.error || quote.error}</div></section>;
 
   const rows = mode === "commission"
@@ -768,6 +958,7 @@ function CostSummary({ mode, quote, route }) {
             <div>
               <span>{row.label}</span>
               <strong>{formatZeny(row.value)}</strong>
+              {formatTwdFromZeny(row.value, exchangeRate) && <small>{formatTwdFromZeny(row.value, exchangeRate)}</small>}
             </div>
             <div className="summary-track">
               <i style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} />
@@ -776,6 +967,124 @@ function CostSummary({ mode, quote, route }) {
         ))}
       </div>
     </section>
+  );
+}
+
+function ModalFrame({ children, className = "", onClose, title, eyebrow, meta }) {
+  return (
+    <div
+      className={`modal-backdrop ${className}`}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className={`modal-panel ${className}`} role="dialog" aria-modal="true" aria-label={title}>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">{eyebrow}</p>
+            <h2>{title}</h2>
+          </div>
+          <div className="card-actions">
+            {meta && <span className="pill">{meta}</span>}
+            <button className="btn secondary small" type="button" onClick={onClose}>關閉</button>
+          </div>
+        </div>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function MaterialPriceDialog({
+  importError,
+  importPreview,
+  importPrices,
+  importSuccess,
+  materialCosts,
+  onClose,
+  onConfirmImport,
+  onExport,
+  onResetImport,
+  prices,
+  updatePrice,
+}) {
+  return (
+    <ModalFrame className="drawer" eyebrow="Market" title="材料價格與成本" meta="自動保存" onClose={onClose}>
+      <div className="modal-content">
+        <section className="drawer-section">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Prices</p>
+              <h3>材料價格</h3>
+            </div>
+            <span className="pill">合併更新</span>
+          </div>
+          <PriceEditor prices={prices} updatePrice={updatePrice} />
+        </section>
+
+        <section className="drawer-section">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Costs</p>
+              <h3>材料成本摘要</h3>
+            </div>
+          </div>
+          <MaterialTable materialCosts={materialCosts} />
+        </section>
+
+        <section className="drawer-section">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Import / Export</p>
+              <h3>匯入 / 匯出</h3>
+            </div>
+          </div>
+          <div className="notice">
+            匯入前建議先匯出目前價格作為備份。可將匯出的 JSON 交給 AI 協助整理價格，再匯入更新；請保留材料 key，不要改欄位名稱。
+          </div>
+          <div className="import-actions">
+            <button className="btn" type="button" onClick={onExport}>匯出價格</button>
+            <label className="file-button">
+              匯入價格 JSON
+              <input accept="application/json,.json" type="file" onChange={importPrices} />
+            </label>
+            {(importPreview || importError || importSuccess) && (
+              <button className="btn secondary" type="button" onClick={onResetImport}>清除訊息</button>
+            )}
+          </div>
+
+          {importError && <div className="notice error">{importError}</div>}
+          {importSuccess && <div className="notice success">{importSuccess}</div>}
+          {importPreview?.ok && (
+            <div className="import-preview">
+              <h4>匯入預覽</h4>
+              <div className="preview-grid">
+                <InfoTile label="將更新" value={`${importPreview.validCount} 個材料`} />
+                <InfoTile label="未知 key" value={`${importPreview.unknownCount} 個`} />
+                <InfoTile label="無效價格" value={`${importPreview.invalidCount} 個`} />
+              </div>
+              {importPreview.unknownKeys.length > 0 && <p>未知 key：{importPreview.unknownKeys.slice(0, 8).join("、")}{importPreview.unknownKeys.length > 8 ? "..." : ""}</p>}
+              {importPreview.invalidPrices.length > 0 && <p>無效價格：{importPreview.invalidPrices.slice(0, 8).join("、")}{importPreview.invalidPrices.length > 8 ? "..." : ""}</p>}
+              <div className="import-confirm">
+                <button className="btn" type="button" disabled={importPreview.validCount === 0} onClick={onConfirmImport}>確認匯入有效價格</button>
+                <button className="btn secondary" type="button" onClick={onResetImport}>取消</button>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    </ModalFrame>
+  );
+}
+
+function RefineCompareDialog({ onClose, route }) {
+  return (
+    <ModalFrame className="compact-modal" eyebrow="Compare" title="精煉比較" meta={route.ok ? `${route.refineComparisons.length} 筆` : "無資料"} onClose={onClose}>
+      <div className="modal-content">
+        <RefineComparisonTable route={route} />
+      </div>
+    </ModalFrame>
   );
 }
 
@@ -906,11 +1215,12 @@ function SimulationSummary({ simulation, simulationStatus }) {
   );
 }
 
-function Metric({ label, value, tone = "" }) {
+function Metric({ label, value, sub = "", tone = "" }) {
   return (
     <div className={`metric ${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+      {sub && <small>{sub}</small>}
     </div>
   );
 }
