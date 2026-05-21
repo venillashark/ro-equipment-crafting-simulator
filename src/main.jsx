@@ -178,6 +178,10 @@ function gradeIndex(gradeId) {
   return GRADES.findIndex((grade) => grade.id === gradeId);
 }
 
+function gradeLabel(gradeId) {
+  return GRADES.find((grade) => grade.id === gradeId)?.label ?? gradeId;
+}
+
 function stableStringify(value) {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
   if (value && typeof value === "object") {
@@ -432,7 +436,7 @@ function App() {
     <div className={`shell mode-${state.mode} theme-${state.theme}`}>
       <header className="app-nav">
         <div className="brand">
-          <div className="mark">RO</div>
+          <div className="mark"><span>RO</span><i aria-hidden="true" /></div>
           <div>
             <p className="eyebrow">Cost Lab</p>
             <h1>裝備製作模擬器</h1>
@@ -712,7 +716,8 @@ function KpiStrip({ mode, quote, route, simulation, simulationStatus, exchangeRa
 
 function KpiCard({ convertedValue = "", featured = false, label, marker, sub, tone = "", value }) {
   return (
-    <article className={`kpi-card ${tone} ${featured ? "featured" : ""}`}>
+    <article className={`kpi-card ${tone} ${featured ? "featured" : ""}`} data-marker={marker}>
+      <span className="kpi-glow" aria-hidden="true" />
       <div className="kpi-top">
         <span>{label}</span>
         <i>{marker}</i>
@@ -726,8 +731,22 @@ function KpiCard({ convertedValue = "", featured = false, label, marker, sub, to
 
 function TargetPanel({ target, updateTarget }) {
   return (
-    <section className="card panel">
+    <section className="card panel target-panel">
       <PanelHeader eyebrow="Target" title="目標設定" meta="已保存" />
+      <div className="target-forge-preview" aria-label="目前目標摘要">
+        <div className="forge-sigil" aria-hidden="true">
+          <span />
+        </div>
+        <div className="target-state">
+          <span>起始</span>
+          <strong>{gradeLabel(target.startGrade)} +{target.startRefine}</strong>
+        </div>
+        <div className="forge-arrow" aria-hidden="true" />
+        <div className="target-state goal">
+          <span>目標</span>
+          <strong>{gradeLabel(target.targetGrade)} +{target.targetRefine}</strong>
+        </div>
+      </div>
       <div className="form-grid one">
         <label>裝備類型
           <select value={target.equipmentType} onChange={(event) => updateTarget("equipmentType", event.target.value)}>
@@ -767,7 +786,7 @@ function TargetPanel({ target, updateTarget }) {
 
 function StrategyPanel({ target, updateTarget }) {
   return (
-    <section className="card panel">
+    <section className="card panel strategy-panel">
       <PanelHeader eyebrow="Strategy" title="路線策略" />
       <div className="form-grid one">
         <label>精煉材料
@@ -791,7 +810,7 @@ function StrategyPanel({ target, updateTarget }) {
 
 function CommissionPanel({ commission, simulationSettings, updateCommission, updateSimulationSetting }) {
   return (
-    <section className="card panel">
+    <section className="card panel commission-panel">
       <PanelHeader eyebrow="Pricing" title="代衝參數" />
       <div className="form-grid">
         <label>利潤率 %
@@ -840,6 +859,9 @@ function ModeInsight({ mode, quote, quoteBasis, route, simulation, simulationSta
 
   return (
     <section className="card mode-panel">
+      <div className="mode-orb" aria-hidden="true">
+        <span>{mode === "commission" ? "Z" : "EV"}</span>
+      </div>
       <div className="mode-copy">
         <p className="eyebrow">{mode === "commission" ? "Commission View" : "Owner View"}</p>
         <h2>{mode === "commission" ? "代衝報價視角" : "自用成本視角"}</h2>
@@ -915,6 +937,10 @@ function MonteCarloPanel({ route, simulation, simulationStatus, settings, update
 
 function Histogram({ buckets = [] }) {
   if (!buckets.length) return null;
+  const peakIndex = buckets.reduce(
+    (bestIndex, bucket, index) => (bucket.ratio > buckets[bestIndex].ratio ? index : bestIndex),
+    0,
+  );
 
   return (
     <div className="chart-block">
@@ -923,11 +949,15 @@ function Histogram({ buckets = [] }) {
         <small>{formatZeny(buckets[0].min)} - {formatZeny(buckets[buckets.length - 1].max)}</small>
       </div>
       <div className="histogram" aria-label="蒙地卡羅成本分布圖">
+        <svg className="histogram-curve" viewBox="0 0 100 48" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 42 C12 35 18 19 29 17 C43 14 48 7 59 12 C70 18 73 32 83 34 C91 36 96 30 100 27" />
+        </svg>
+        <span className="histogram-cursor" style={{ left: `${((peakIndex + 0.5) / buckets.length) * 100}%` }} aria-hidden="true" />
         {buckets.map((bucket, index) => (
           <div
             key={`${bucket.min}-${bucket.max}-${index}`}
-            className={`bar ${index > buckets.length * 0.9 ? "p95" : index > buckets.length * 0.75 ? "p90" : ""}`}
-            style={{ height: `${Math.max(5, bucket.ratio * 100)}%` }}
+            className={`bar ${index === peakIndex ? "peak" : ""} ${index > buckets.length * 0.9 ? "p95" : index > buckets.length * 0.75 ? "p90" : ""}`}
+            style={{ height: `${Math.max(5, bucket.ratio * 100)}%`, "--bar-index": index }}
             title={`${formatZeny(bucket.min)} - ${formatZeny(bucket.max)}: ${bucket.count}`}
           />
         ))}
@@ -963,6 +993,7 @@ function RoutePanel({ route, openRefineCompare }) {
         <div className="timeline">
           {route.steps.map((step) => {
             const risk = getStepRiskLevel(step);
+            const materials = step.materials?.length ? step.materials : ["無材料"];
             return (
               <article className={`timeline-step risk-${risk.level}`} key={`${step.index}-${step.label}`}>
                 <div className="timeline-index">{step.index}</div>
@@ -981,9 +1012,10 @@ function RoutePanel({ route, openRefineCompare }) {
                     </span>
                   </div>
                   <p className="step-fail">{step.failText}</p>
-                  <p className="step-materials">
-                    {(step.materials?.length ? step.materials.join("、") : "無材料")} / 手續費 {formatZeny(step.zenyFee)}
-                  </p>
+                  <div className="step-materials">
+                    {materials.map((material) => <span className="material-chip" key={material}>{material}</span>)}
+                    <span className="fee-chip">手續費 {formatZeny(step.zenyFee)}</span>
+                  </div>
                 </div>
               </article>
             );
@@ -1121,7 +1153,7 @@ function MaterialConsumptionPanel({ route, simulation, simulationStatus, onExpor
               {materialKeys.map((key) => (
                 <tr key={key}>
                   <td>
-                    <span className="material-name">{MATERIALS[key] ?? key}</span>
+                    <span className="material-name"><i className="material-dot" aria-hidden="true" />{MATERIALS[key] ?? key}</span>
                     <code>{key}</code>
                   </td>
                   <td className="number">{formatQuantity(routeMaterials[key] ?? 0)}</td>
@@ -1360,10 +1392,24 @@ function MaterialTable({ materialCosts }) {
 }
 
 function PriceEditor({ prices, updatePrice }) {
+  const [openSections, setOpenSections] = useState(() => Object.fromEntries(
+    PRICE_SECTIONS.map((section) => [section.id, section.defaultOpen]),
+  ));
+
   return (
     <div className="price-accordion">
       {PRICE_SECTIONS.map((section) => (
-        <details className="price-group" key={section.id} defaultOpen={section.defaultOpen}>
+        <details
+          className="price-group"
+          key={section.id}
+          open={Boolean(openSections[section.id])}
+          onToggle={(event) => {
+            const isOpen = event.currentTarget.open;
+            setOpenSections((current) => (
+              current[section.id] === isOpen ? current : { ...current, [section.id]: isOpen }
+            ));
+          }}
+        >
           <summary>
             <span>{section.title}</span>
             <em>{section.badge}</em>
